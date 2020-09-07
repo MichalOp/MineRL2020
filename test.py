@@ -18,13 +18,17 @@ import numpy as np
 import coloredlogs
 coloredlogs.install(logging.DEBUG)
 
+from model import Model, BaseModel, ProbModel
+import torch
+import cv2
+
 # All the evaluations will be evaluated on MineRLObtainDiamondVectorObf-v0 environment
 MINERL_GYM_ENV = os.getenv('MINERL_GYM_ENV', 'MineRLObtainDiamondVectorObf-v0')
 MINERL_MAX_EVALUATION_EPISODES = int(os.getenv('MINERL_MAX_EVALUATION_EPISODES', 5))
 
 # Parallel testing/inference, **you can override** below value based on compute
 # requirements, etc to save OOM in this phase.
-EVALUATION_THREAD_COUNT = int(os.getenv('EPISODES_EVALUATION_THREAD_COUNT', 2))
+EVALUATION_THREAD_COUNT = int(os.getenv('EPISODES_EVALUATION_THREAD_COUNT', 1))
 
 class EpisodeDone(Exception):
     pass
@@ -133,6 +137,50 @@ class MineRLMatrixAgent(MineRLAgentBase):
         while not done:
             obs,reward,done,_ = single_episode_env.step(self.act(self.flatten_obs(obs)))
 
+class MineRLNetworkAgent(MineRLAgentBase):
+    """
+    An example random agent. 
+    Note, you MUST subclass MineRLAgentBase.
+    """
+
+    def load_agent(self):
+        """In this example we make a random matrix which
+        we will use to multiply the state by to produce an action!
+
+        This is where you could load a neural network.
+        """
+        # Some helpful constants from the environment.
+        self.model = Model()
+        self.model.load_state_dict(torch.load("train/model_fitted.tm"))
+        self.model.cuda()
+
+
+    def run_agent_on_episode(self, single_episode_env : Episode):
+        """Runs the agent on a SINGLE episode.
+
+        Args:
+            single_episode_env (Episode): The episode on which to run the agent.
+        """
+        with torch.no_grad():
+            obs = single_episode_env.reset()
+            done = False
+            state = self.model.get_zero_state(1)
+            i = 0
+            while not done:
+                
+                spatial = torch.tensor(obs["pov"], device="cuda", dtype=torch.float32).unsqueeze(0).unsqueeze(0).transpose(2,4)
+                #cv2.imshow("xdd", obs["pov"])
+                #cv2.waitKey(200)
+                nonspatial = torch.tensor(obs["vector"], device="cuda", dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                #output, state = self.model.get_distribution(spatial, nonspatial, state, torch.zeros((1,1,64),dtype=torch.float32,device="cuda"))
+                s, state = self.model(spatial, nonspatial, state, torch.zeros((1,1,64),dtype=torch.float32,device="cuda"))
+                #print(output)
+                #if i%5 == 0:
+                #    s = output.sample()
+                #print(s.shape)
+                i+=1
+                obs,reward,done,_ = single_episode_env.step({"vector":s[0,0].cpu().numpy()})
+
 
 class MineRLRandomAgent(MineRLAgentBase):
     """A random agent"""
@@ -149,7 +197,7 @@ class MineRLRandomAgent(MineRLAgentBase):
 #####################################################################
 # IMPORTANT: SET THIS VARIABLE WITH THE AGENT CLASS YOU ARE USING   # 
 ######################################################################
-AGENT_TO_TEST = MineRLMatrixAgent # MineRLMatrixAgent, MineRLRandomAgent, YourAgentHere
+AGENT_TO_TEST = MineRLNetworkAgent # MineRLMatrixAgent, MineRLRandomAgent, YourAgentHere
 
 
 
