@@ -1,8 +1,0 @@
-crowdai_api
-minerl
-coloredlogs
-matplotlib
-opencv-python
-pyro4
-torch
-torchvision
