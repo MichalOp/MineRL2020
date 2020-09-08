@@ -96,7 +96,7 @@ def main():
     t0 = time()
     losssum = 0
     gradsum = 0
-    for i in range(int(2e7)):
+    for i in range(int((2e6)/8)):
         step+=1
         #print(i)
         spatial, nonspatial, act, hidden = loader.get_batch(BATCH_SIZE)
@@ -185,7 +185,7 @@ def main():
     # Training 100% Completed
     torch.save(model.state_dict(),"train/model.tm")
     print("ok")
-    #aicrowd_helper.register_progress(1)
+    aicrowd_helper.register_progress(1)
     #env.close()
 
 

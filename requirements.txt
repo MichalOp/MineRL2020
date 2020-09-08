@@ -4,3 +4,5 @@ coloredlogs
 matplotlib
 opencv-python
 pyro4
+torch
+torchvision
