@@ -2,7 +2,7 @@
   "challenge_id": "aicrowd-neurips-2020-minerl-challenge",
   "grader_id": "aicrowd-neurips-2020-minerl-challenge",
   "authors": ["MichalOp"],
-  "tags": "change-me",
+  "tags": "IL",
   "description": "Lets see if it doesn't crash horribly",
   "gpu": true
 }
