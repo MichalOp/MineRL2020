@@ -137,30 +137,44 @@ class Selector(nn.Module):
 
     def forward(self, spatial, nonspatial, state, target):
         
-        lstm_output, new_state = self.lstm(, state)
+        processed = self.input_proc.forward(spatial, nonspatial)
+
+        lstm_output, new_state = self.lstm(processed, state)
+
+        cat = torch.cat([lstm_output, target],dim=-1)
+        
+        return self.selector(cat), new_state
+
+class SubPolicies(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.input_proc = InputProcessor()
+        self.reflexes = nn.Sequential(nn.Linear(256+64, 256), nn.ReLU(), nn.Linear(256, 64*10))
+    
+    def forward(self, spatial, nonspatial):
+        shape = spatial.shape
+        processed = self.input_proc.forward(spatial, nonspatial)
+        return self.reflexes(processed).view(shape[:2]+(10,64))
+
+
 
 class Model(nn.Module):
 
     def __init__(self):
         super().__init__()
         
-
-        
-        #self.fake_lstm = nn.Sequential(nn.Linear(512+64, 512),nn.ReLU())
-        self.reflexes = nn.Linear(256, 64*10)
-        self.selector = nn.Sequential(nn.Linear(256+64, 256),nn.ReLU(), nn.Linear(256, 10), nn.Sigmoid())
+        self.selector = Selector()
+        self.reflexes = SubPolicies()
 
     def get_zero_state(self, batch_size, device="cuda"):
         return (torch.zeros((1, batch_size, 256), device="cuda"), torch.zeros((1, batch_size, 256), device="cuda"))
 
     def forward(self, spatial, nonspatial, state, target):
         
-        
-        
-        
-        #lstm_output = self.fake_lstm(torch.cat([spatial, nonspatial],dim=-1))
-        reflex_outputs = self.reflexes(lstm_output).view(shape[:2]+(10,64))
-        selection = self.selector(torch.cat([lstm_output, target],2)).unsqueeze(-1)
+        reflex_outputs = self.reflexes(spatial, nonspatial)
+        selection, new_state = self.selector(spatial, nonspatial, state, target)
+        selection = selection.unsqueeze(-1)
         result = selection*reflex_outputs
         #print(result.shape) 
         result = result.sum(axis=2)

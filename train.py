@@ -12,7 +12,7 @@ from utility.parser import Parser
 import coloredlogs
 coloredlogs.install(logging.DEBUG)
 
-from model import Model, BaseModel, ProbModel
+from model import Model, Selector
 import torch
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
@@ -31,7 +31,7 @@ from random import shuffle
 from minerl.data import DataPipeline
 
 if trains_loaded:
-    task = Task.init(project_name='MineRL', task_name='lstm fixup seq=128 batch=8 dia+pic+tre')
+    task = Task.init(project_name='MineRL', task_name='lstm fixup selector seq=128 batch=8 dia+pic+tre')
     logger = task.get_logger()
 
 # All the evaluations will be evaluated on MineRLObtainDiamond-v0 environment
@@ -60,40 +60,21 @@ parser = Parser('performance/',
                 initial_poll_timeout=600)
 
 BATCH_SIZE = 8
-SEQ_LEN = 128
+SEQ_LEN = 100
 
 FIT = True
 LOAD = False
 FULL = True
 
-def main():
-    """
-    This function will be called for training phase.
-    """
-    # How to sample minerl data is document here:
-    # http://minerl.io/docs/tutorials/data_sampling.html
-    #data = minerl.data.make('MineRLObtainDiamondVectorObf-v0', data_dir='data/',num_workers=6)
-    model = Model()
-    train_files = absolute_file_paths('data/MineRLObtainDiamondVectorObf-v0')+\
-                  absolute_file_paths('data/MineRLObtainIronPickaxeVectorObf-v0')+\
-                  absolute_file_paths('data/MineRLTreechopVectorObf-v0')
-
-    shuffle(train_files)
-    loader = BatchSeqLoader(16, train_files, SEQ_LEN, model)
-    if (FIT and not FULL) or LOAD:
-        model.load_state_dict(torch.load("train/model.tm"))
-    def weight_reset(m):
-        if isinstance(m, torch.nn.Conv2d) or isinstance(m, torch.nn.Linear):
-            m.reset_parameters()
-    if FIT and not FULL:
-        model.selector.apply(weight_reset)
-    model.cuda()
-    if FIT and not FULL:
-        optimizer = Adam(params=model.selector.parameters(), lr=1e-4, weight_decay=1e-5)
+def train(model, mode, steps, loader):
+    if mode != "fit_selector":
+        optimizer = Adam(params=model.parameters(), lr=1e-4, weight_decay=1e-6)
     else:
-        optimizer = Adam(params=model.parameters(), lr=1e-4, weight_decay=1e-5)
+        optimizer = Adam(params=model.selector.parameters(), lr=1e-4, weight_decay=1e-6)
+
     def lambda1(x):
         return min((1e-1)* (sqrt(sqrt(sqrt(10)))**min(x, 50)),1)
+    
     scheduler = LambdaLR(optimizer, lr_lambda=lambda1)
     optimizer.zero_grad()
     step = 0
@@ -101,12 +82,12 @@ def main():
     t0 = time()
     losssum = 0
     gradsum = 0
-    for i in range(int((2e6)/8)):
+    for i in range(int(steps/ BATCH_SIZE / SEQ_LEN)):
         step+=1
         #print(i)
         spatial, nonspatial, act, hidden = loader.get_batch(BATCH_SIZE)
         count += BATCH_SIZE*SEQ_LEN
-        if FIT:
+        if mode != "pretrain":
             loss, hidden = model.get_loss(spatial, nonspatial, hidden, torch.zeros(act.shape, dtype=torch.float32, device="cuda"), act)
         else:
             loss, hidden = model.get_loss(spatial, nonspatial, hidden, act, act)
@@ -116,15 +97,9 @@ def main():
         loss = loss.sum() / BATCH_SIZE / SEQ_LEN
         loss.backward()
         
-
         losssum += loss.item()
-        #print(loss.item())
-        # if done[0][-1]:
-        #     hidden = model.get_zero_state(1)
-        # else:
-        #     hidden = (hidden[0].detach(), hidden[1].detach())
         
-        if FIT and not FULL:
+        if mode == "fit_selector":
             grad_norm = clip_grad_norm_(model.selector.parameters(),10)
         else:
             grad_norm = clip_grad_norm_(model.parameters(),10)
@@ -137,17 +112,45 @@ def main():
         if step % 10 == 0:
             print(losssum, count, count/(time()-t0))
             if step > 50 and trains_loaded:
-                logger.report_scalar(title='Training', series='loss', value=losssum/(100/BATCH_SIZE), iteration=int(count))
-                logger.report_scalar(title='Training', series='grad_norm', value=gradsum/(100/BATCH_SIZE), iteration=int(count))
-                logger.report_scalar(title='Training', series='learning_rate', value=float(optimizer.param_groups[0]["lr"]), iteration=int(count))
+                logger.report_scalar(title='Training_'+mode, series='loss', value=losssum/(100/BATCH_SIZE), iteration=int(count))
+                logger.report_scalar(title='Training_'+mode, series='grad_norm', value=gradsum/(100/BATCH_SIZE), iteration=int(count))
+                logger.report_scalar(title='Training_'+mode, series='learning_rate', value=float(optimizer.param_groups[0]["lr"]), iteration=int(count))
             losssum = 0
             gradsum = 0
 
-            if FIT:
+            if mode == "fit_selector":
                 torch.save(model.state_dict(),"train/model_fitted.tm")
             else:
                 torch.save(model.state_dict(),"train/model.tm")
-        
+
+def main():
+    aicrowd_helper.training_start()
+    """
+    This function will be called for training phase.
+    """
+    # How to sample minerl data is document here:
+    # http://minerl.io/docs/tutorials/data_sampling.html
+    #data = minerl.data.make('MineRLObtainDiamondVectorObf-v0', data_dir='data/',num_workers=6)
+    train_files = absolute_file_paths('data/MineRLObtainDiamondVectorObf-v0')+\
+                  absolute_file_paths('data/MineRLObtainIronPickaxeVectorObf-v0')+\
+                  absolute_file_paths('data/MineRLTreechopVectorObf-v0')
+
+    model = Model()
+    shuffle(train_files)
+    
+    loader = BatchSeqLoader(16, train_files, SEQ_LEN, model)
+    
+    if LOAD:
+        model.load_state_dict(torch.load("train/model.tm"))
+    model.cuda()
+    
+    train(model, "pretrain", 4000000, loader)
+
+    model.selector = Selector()
+    model.selector.cuda()
+    aicrowd_helper.register_progress(0.5)
+
+    train(model, "fit_selector", 4000000, loader)
 
         # Print the POV @ the first step of the sequence
         #print(current_state['pov'][0])
@@ -191,6 +194,7 @@ def main():
     torch.save(model.state_dict(),"train/model.tm")
     print("ok")
     aicrowd_helper.register_progress(1)
+    aicrowd_helpertraining_end()
     #env.close()
 
 
