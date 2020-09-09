@@ -3,16 +3,16 @@ channels:
   - anaconda
   - conda-forge
   - defaults
+  - pytorch
 dependencies:
   - python=3.6
   - pip
   - py-opencv
+  - pytorch
+  - torchvision
   - pip:
     - crowdai_api
     - minerl
     - coloredlogs
     - matplotlib
     - pyro4
-    - opencv-python
-    - torch
-    - torchvision

@@ -21,13 +21,18 @@ from time import time
 from loader import BatchSeqLoader, absolute_file_paths
 from math import sqrt
 
-from trains import Task
+trains_loaded = True
+try:
+    from trains import Task
+except:
+    trains_loaded = False
 from random import shuffle
 
 from minerl.data import DataPipeline
 
-task = Task.init(project_name='MineRL', task_name='lstm fixup seq=128 batch=8 dia+pic+tre')
-logger = task.get_logger()
+if trains_loaded:
+    task = Task.init(project_name='MineRL', task_name='lstm fixup seq=128 batch=8 dia+pic+tre')
+    logger = task.get_logger()
 
 # All the evaluations will be evaluated on MineRLObtainDiamond-v0 environment
 MINERL_GYM_ENV = os.getenv('MINERL_GYM_ENV', 'MineRLObtainDiamondVectorObf-v0')
@@ -131,7 +136,7 @@ def main():
             
         if step % 10 == 0:
             print(losssum, count, count/(time()-t0))
-            if step > 50:
+            if step > 50 and trains_loaded:
                 logger.report_scalar(title='Training', series='loss', value=losssum/(100/BATCH_SIZE), iteration=int(count))
                 logger.report_scalar(title='Training', series='grad_norm', value=gradsum/(100/BATCH_SIZE), iteration=int(count))
                 logger.report_scalar(title='Training', series='learning_rate', value=float(optimizer.param_groups[0]["lr"]), iteration=int(count))
