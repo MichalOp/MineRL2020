@@ -109,11 +109,11 @@ def train(model, mode, steps, loader):
         optimizer.zero_grad()
         scheduler.step()
             
-        if step % 10 == 0:
+        if step % 20 == 0:
             print(losssum, count, count/(time()-t0))
             if step > 50 and trains_loaded:
-                logger.report_scalar(title='Training_'+mode, series='loss', value=losssum/(100/BATCH_SIZE), iteration=int(count))
-                logger.report_scalar(title='Training_'+mode, series='grad_norm', value=gradsum/(100/BATCH_SIZE), iteration=int(count))
+                logger.report_scalar(title='Training_'+mode, series='loss', value=losssum/20, iteration=int(count))
+                logger.report_scalar(title='Training_'+mode, series='grad_norm', value=gradsum/20, iteration=int(count))
                 logger.report_scalar(title='Training_'+mode, series='learning_rate', value=float(optimizer.param_groups[0]["lr"]), iteration=int(count))
             losssum = 0
             gradsum = 0
@@ -144,13 +144,13 @@ def main():
         model.load_state_dict(torch.load("train/model.tm"))
     model.cuda()
     
-    train(model, "pretrain", 4000000, loader)
+    train(model, "pretrain", 50000000, loader)
 
     model.selector = Selector()
     model.selector.cuda()
     aicrowd_helper.register_progress(0.5)
 
-    train(model, "fit_selector", 4000000, loader)
+    train(model, "fit_selector", 50000000, loader)
 
         # Print the POV @ the first step of the sequence
         #print(current_state['pov'][0])
@@ -194,7 +194,7 @@ def main():
     torch.save(model.state_dict(),"train/model.tm")
     print("ok")
     aicrowd_helper.register_progress(1)
-    aicrowd_helpertraining_end()
+    aicrowd_helper.training_end()
     #env.close()
 
 
