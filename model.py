@@ -173,7 +173,9 @@ class Model(nn.Module):
     def forward(self, spatial, nonspatial, state, target):
         
         reflex_outputs = self.reflexes(spatial, nonspatial)
+        print(reflex_outputs.sum())
         selection, new_state = self.selector(spatial, nonspatial, state, target)
+        print(selection.squeeze())
         selection = selection.unsqueeze(-1)
         result = selection*reflex_outputs
         #print(result.shape) 
@@ -205,7 +207,7 @@ class BaseModel(nn.Module):
         self.output = nn.Sequential(nn.Linear(256,64),)
 
     def get_zero_state(self, batch_size, device="cuda"):
-        (torch.zeros((batch_size, 256, 1), device="cuda"), torch.zeros((batch_size, 256, 1), device="cuda"))
+        return (torch.zeros((1, batch_size, 256), device="cuda"), torch.zeros((1, batch_size, 256), device="cuda"))
 
     def forward(self, spatial, nonspatial, state, target):
         
@@ -236,8 +238,6 @@ class BaseModel(nn.Module):
 
 
 
-
-
 class ProbModel(nn.Module):
 
     def __init__(self):
@@ -251,17 +251,17 @@ class ProbModel(nn.Module):
         # self.c4 = nn.Conv2d(64,64, (3,3), padding=1)
         
         self.spatial_reshape = nn.Sequential(nn.Linear(64*8*8, 256),nn.ReLU())
-        self.nonspatial_reshape = nn.Sequential(nn.Linear(64,64),nn.ReLU())
-
-        self.hidden = nn.Sequential(nn.Linear(256+64, 256),nn.ReLU())
+        self.nonspatial_reshape = nn.Sequential(nn.Linear(128,128),nn.ReLU())
+        self.lstm = nn.LSTM(256+128, 256, 1)
+        #self.hidden = nn.Sequential(nn.Linear(256+64, 256),nn.ReLU())
         self.mu = nn.Sequential(nn.Linear(256,64*5),nn.Tanh())
-        self.sigma = nn.Sequential(nn.Linear(256,64*5),nn.Sigmoid())
-        self.scale = nn.Linear(256,64*5)
+        self.sigma = nn.Sequential(nn.Linear(256,64*64*5))
+        self.scale = nn.Linear(256,5)
 
     def get_zero_state(self, batch_size, device="cuda"):
-        (torch.zeros((batch_size, 256, 1), device="cuda"), torch.zeros((batch_size, 256, 1), device="cuda"))
+        return (torch.zeros((1, batch_size, 256), device="cuda"), torch.zeros((1, batch_size, 256), device="cuda"))
 
-    def forward(self, spatial, nonspatial, state, target):
+    def forward(self, spatial, nonspatial, prev_action, state, target):
         
         shape = spatial.shape
         spatial = spatial.view((shape[0]*shape[1],)+shape[2:])/255.0
@@ -272,29 +272,38 @@ class ProbModel(nn.Module):
 
         new_shape = spatial.shape
         spatial = spatial.view(shape[:2]+(-1,))
-        nonspatial = self.nonspatial_reshape(nonspatial)
+        nonspatial = self.nonspatial_reshape(torch.cat([nonspatial, prev_action], dim=-1))
         spatial = self.spatial_reshape(spatial)
         
-        h = self.hidden(torch.cat([spatial, nonspatial],dim=-1))
-        mu = self.mu(h).view(shape[:2]+(64,-1))
+        h, state = self.lstm(torch.cat([spatial, nonspatial],dim=-1), state)
+        mu = self.mu(h).view(shape[:2]+(-1,64))
         #print(mu)
-        sigma = self.sigma(h).view(shape[:2]+(64,-1))
-        scale = self.scale(h).view(shape[:2]+(64,-1))
+        sigma = self.sigma(h).view(shape[:2]+(-1,64,64))
+        sigma_bot = torch.tril(sigma, diagonal=-1)
+        sigma_diag = F.elu(torch.diagonal(sigma, dim1=-2, dim2=-1))+1
+        #print(sigma_bot.shape)
+        #print(sigma_diag.shape)
+        sigma =torch.diag_embed(sigma_diag)# +  sigma_bot 
+        scale = self.scale(h).view(shape[:2]+(-1,))
         return mu, sigma, scale, state
 
-    def get_distribution(self, spatial, nonspatial, state, target):
+    def get_distribution(self, spatial, nonspatial, prev_action, state, target):
         
-        mu, sigma, scale, state = self.forward(spatial, nonspatial, state, target)
+        mu, sigma, scale, state = self.forward(spatial, nonspatial, prev_action, state, target)
         mix = D.Categorical(logits=scale)
-        comp = D.Normal(mu, sigma)
+        comp = D.MultivariateNormal(loc=mu, scale_tril=sigma)
         d = D.MixtureSameFamily(mix, comp)
         return d, state
 
-    def get_loss(self, spatial, nonspatial, state, target, point):
-        
-        d, state = self.get_distribution(spatial, nonspatial, state, target)
+    def sample(self, spatial, nonspatial,prev_action, state, target):
+        d, state = self.get_distribution(spatial, nonspatial,prev_action, state, target)
+        return d.sample(), state
 
-        return d.log_prob(point), state
+    def get_loss(self, spatial, nonspatial, prev_action, state, target, point):
+        
+        d, state = self.get_distribution(spatial, nonspatial, prev_action, state, target)
+        #print(-d.log_prob(point))
+        return -d.log_prob(point), state
     
 
 if __name__ == "__main__":

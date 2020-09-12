@@ -25,8 +25,10 @@ def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
         obs_screen = torch.tensor(obs["pov"], dtype=torch.float32).unsqueeze(1).transpose(2,4)
         #print("pov")
         obs_vector = torch.tensor(obs["vector"], dtype=torch.float32).unsqueeze(1)#.transpose(0,1)
+        
         #print("vec")
         actions = torch.tensor(act["vector"], dtype=torch.float32).unsqueeze(1)#.transpose(0,1)
+        prev_action = torch.cat([torch.zeros((1,1,64)), actions[:-1]], dim=0)
         l = actions.shape[0]
         for i in range(0, l, batch_size):
             steps += 1
@@ -37,7 +39,7 @@ def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
                 #print("wut", len(obs["pov"][i:i+batch_size]))
                 break
             
-            pipe.send((obs_screen[i:i+batch_size], obs_vector[i:i+batch_size], actions[i:i+batch_size]))
+            pipe.send((obs_screen[i:i+batch_size], obs_vector[i:i+batch_size], prev_action[i:i+batch_size], actions[i:i+batch_size]))
             
             internal_sem.release()
             main_sem.release()
@@ -135,13 +137,14 @@ class BatchSeqLoader():
                     if len(data) == batch_size:
                         break
 
-        obs_screen, obs_vector, act, states = zip(*data)
+        obs_screen, obs_vector, obs_prev_action, act, states = zip(*data)
 
         obs_screen = torch.cat(obs_screen, dim=1).cuda()
         obs_vector = torch.cat(obs_vector, dim=1).cuda()
+        obs_prev_action = torch.cat(obs_prev_action, dim=1).cuda()
         act = torch.cat(act, dim=1).cuda()
         #print(act.shape)
-        return obs_screen, obs_vector, act, self.batch_lstm(states)
+        return obs_screen, obs_vector, obs_prev_action, act, self.batch_lstm(states)
 
     def put_back(self, lstm_state):
         lstm_state = self.unbatch_lstm(lstm_state)

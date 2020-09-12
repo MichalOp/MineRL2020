@@ -150,8 +150,8 @@ class MineRLNetworkAgent(MineRLAgentBase):
         This is where you could load a neural network.
         """
         # Some helpful constants from the environment.
-        self.model = Model()
-        self.model.load_state_dict(torch.load("train/model_fitted.tm"))
+        self.model = ProbModel()
+        self.model.load_state_dict(torch.load("train/model.tm"))
         self.model.cuda()
 
 
@@ -166,6 +166,7 @@ class MineRLNetworkAgent(MineRLAgentBase):
             done = False
             state = self.model.get_zero_state(1)
             i = 0
+            s = torch.zeros((1,1,64), dtype=torch.float32, device="cuda")
             while not done:
                 
                 spatial = torch.tensor(obs["pov"], device="cuda", dtype=torch.float32).unsqueeze(0).unsqueeze(0).transpose(2,4)
@@ -173,13 +174,15 @@ class MineRLNetworkAgent(MineRLAgentBase):
                 #cv2.waitKey(200)
                 nonspatial = torch.tensor(obs["vector"], device="cuda", dtype=torch.float32).unsqueeze(0).unsqueeze(0)
                 #output, state = self.model.get_distribution(spatial, nonspatial, state, torch.zeros((1,1,64),dtype=torch.float32,device="cuda"))
-                s, state = self.model(spatial, nonspatial, state, torch.zeros((1,1,64),dtype=torch.float32,device="cuda"))
+                s, state = self.model.sample(spatial, nonspatial, s, state, torch.zeros((1,1,64),dtype=torch.float32,device="cuda"))
                 #print(output)
                 #if i%5 == 0:
-                #    s = output.sample()
                 #print(s.shape)
                 i+=1
                 obs,reward,done,_ = single_episode_env.step({"vector":s[0,0].cpu().numpy()})
+                if reward > 0:
+                    for i in range(20):
+                        print(reward)
 
 
 class MineRLRandomAgent(MineRLAgentBase):

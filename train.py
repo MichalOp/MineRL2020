@@ -12,7 +12,7 @@ from utility.parser import Parser
 import coloredlogs
 coloredlogs.install(logging.DEBUG)
 
-from model import Model, Selector
+from model import Model, Selector, ProbModel
 import torch
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
@@ -20,6 +20,8 @@ from torch.nn.utils import clip_grad_norm_, clip_grad_value_
 from time import time
 from loader import BatchSeqLoader, absolute_file_paths
 from math import sqrt
+#from kmeans import cached_kmeans
+
 
 trains_loaded = True
 try:
@@ -31,7 +33,7 @@ from random import shuffle
 from minerl.data import DataPipeline
 
 if trains_loaded:
-    task = Task.init(project_name='MineRL', task_name='lstm fixup selector seq=128 batch=8 dia+pic+tre')
+    task = Task.init(project_name='MineRL', task_name='multivariate simple prob dia+pic+tre cd')
     logger = task.get_logger()
 
 # All the evaluations will be evaluated on MineRLObtainDiamond-v0 environment
@@ -63,10 +65,11 @@ BATCH_SIZE = 8
 SEQ_LEN = 100
 
 FIT = True
-LOAD = False
+LOAD = True
 FULL = True
 
 def train(model, mode, steps, loader):
+
     if mode != "fit_selector":
         optimizer = Adam(params=model.parameters(), lr=1e-4, weight_decay=1e-6)
     else:
@@ -85,12 +88,12 @@ def train(model, mode, steps, loader):
     for i in range(int(steps/ BATCH_SIZE / SEQ_LEN)):
         step+=1
         #print(i)
-        spatial, nonspatial, act, hidden = loader.get_batch(BATCH_SIZE)
+        spatial, nonspatial, prev_action, act, hidden = loader.get_batch(BATCH_SIZE)
         count += BATCH_SIZE*SEQ_LEN
         if mode != "pretrain":
-            loss, hidden = model.get_loss(spatial, nonspatial, hidden, torch.zeros(act.shape, dtype=torch.float32, device="cuda"), act)
+            loss, hidden = model.get_loss(spatial, nonspatial, prev_action, hidden, torch.zeros(act.shape, dtype=torch.float32, device="cuda"), act)
         else:
-            loss, hidden = model.get_loss(spatial, nonspatial, hidden, act, act)
+            loss, hidden = model.get_loss(spatial, nonspatial, prev_action, hidden, act, act)
 
         loader.put_back(hidden)
 
@@ -135,7 +138,7 @@ def main():
                   absolute_file_paths('data/MineRLObtainIronPickaxeVectorObf-v0')+\
                   absolute_file_paths('data/MineRLTreechopVectorObf-v0')
 
-    model = Model()
+    model = ProbModel()
     shuffle(train_files)
     
     loader = BatchSeqLoader(16, train_files, SEQ_LEN, model)
@@ -144,13 +147,13 @@ def main():
         model.load_state_dict(torch.load("train/model.tm"))
     model.cuda()
     
-    train(model, "pretrain", 50000000, loader)
+    train(model, "train", 100000000, loader)
 
-    model.selector = Selector()
-    model.selector.cuda()
-    aicrowd_helper.register_progress(0.5)
+    # model.selector = Selector()
+    # model.selector.cuda()
+    # aicrowd_helper.register_progress(0.5)
 
-    train(model, "fit_selector", 50000000, loader)
+    # train(model, "fit_selector", 50000000, loader)
 
         # Print the POV @ the first step of the sequence
         #print(current_state['pov'][0])
