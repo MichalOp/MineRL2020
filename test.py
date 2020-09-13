@@ -30,6 +30,8 @@ MINERL_MAX_EVALUATION_EPISODES = int(os.getenv('MINERL_MAX_EVALUATION_EPISODES',
 # requirements, etc to save OOM in this phase.
 EVALUATION_THREAD_COUNT = int(os.getenv('EPISODES_EVALUATION_THREAD_COUNT', 1))
 
+device = "cpu"#"cuda" if torch.cuda.is_available() else "cpu"
+
 class EpisodeDone(Exception):
     pass
 
@@ -150,9 +152,9 @@ class MineRLNetworkAgent(MineRLAgentBase):
         This is where you could load a neural network.
         """
         # Some helpful constants from the environment.
-        self.model = ProbModel()
+        self.model = Model()
         self.model.load_state_dict(torch.load("train/model.tm"))
-        self.model.cuda()
+        self.model.to(device)
 
 
     def run_agent_on_episode(self, single_episode_env : Episode):
@@ -164,25 +166,25 @@ class MineRLNetworkAgent(MineRLAgentBase):
         with torch.no_grad():
             obs = single_episode_env.reset()
             done = False
-            state = self.model.get_zero_state(1)
+            state = self.model.get_zero_state(1, device=device)
             i = 0
-            s = torch.zeros((1,1,64), dtype=torch.float32, device="cuda")
+            s = torch.zeros((1,1,64), dtype=torch.float32, device=device)
             while not done:
                 
-                spatial = torch.tensor(obs["pov"], device="cuda", dtype=torch.float32).unsqueeze(0).unsqueeze(0).transpose(2,4)
+                spatial = torch.tensor(obs["pov"], device=device, dtype=torch.float32).unsqueeze(0).unsqueeze(0).transpose(2,4)
                 #cv2.imshow("xdd", obs["pov"])
                 #cv2.waitKey(200)
-                nonspatial = torch.tensor(obs["vector"], device="cuda", dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-                #output, state = self.model.get_distribution(spatial, nonspatial, state, torch.zeros((1,1,64),dtype=torch.float32,device="cuda"))
-                s, state = self.model.sample(spatial, nonspatial, s, state, torch.zeros((1,1,64),dtype=torch.float32,device="cuda"))
+                nonspatial = torch.tensor(obs["vector"], device=device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                s, state = self.model.sample(spatial, nonspatial, s, state, torch.zeros((1,1,64),dtype=torch.float32,device=device))
+                #print(s)
                 #print(output)
                 #if i%5 == 0:
                 #print(s.shape)
                 i+=1
-                obs,reward,done,_ = single_episode_env.step({"vector":s[0,0].cpu().numpy()})
-                if reward > 0:
-                    for i in range(20):
-                        print(reward)
+                obs,reward,done,_ = single_episode_env.step({"vector":s})
+                # if reward > 0:
+                #     for i in range(20):
+                #         print(reward)
 
 
 class MineRLRandomAgent(MineRLAgentBase):

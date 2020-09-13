@@ -3,6 +3,7 @@ from torch import nn
 from torch.nn import functional as F
 import torch.distributions as D
 import math
+from kmeans import cached_kmeans
 
 class ResidualBlock(nn.Module):
 
@@ -133,17 +134,18 @@ class Selector(nn.Module):
         super().__init__()
         self.input_proc = InputProcessor()
         self.lstm = nn.LSTM(256+64, 256, 1)
-        self.selector = nn.Sequential(nn.Linear(256+64, 256),nn.ReLU(), nn.Linear(256, 10), nn.Sigmoid())
+        self.selector = nn.Sequential(nn.Linear(256, 256),nn.ReLU(), nn.Linear(256, 120))
 
     def forward(self, spatial, nonspatial, state, target):
         
         processed = self.input_proc.forward(spatial, nonspatial)
 
         lstm_output, new_state = self.lstm(processed, state)
-
-        cat = torch.cat([lstm_output, target],dim=-1)
+        #print(lstm_output.shape)
+        #print(target.shape)
+        #cat = torch.cat([lstm_output, target],dim=-1)
         
-        return self.selector(cat), new_state
+        return self.selector(lstm_output), new_state
 
 class SubPolicies(nn.Module):
 
@@ -163,31 +165,43 @@ class Model(nn.Module):
 
     def __init__(self):
         super().__init__()
-        
+        self.kmeans = cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
         self.selector = Selector()
-        self.reflexes = SubPolicies()
+        #self.reflexes = SubPolicies()
 
     def get_zero_state(self, batch_size, device="cuda"):
-        return (torch.zeros((1, batch_size, 256), device="cuda"), torch.zeros((1, batch_size, 256), device="cuda"))
+        return (torch.zeros((1, batch_size, 256), device=device), torch.zeros((1, batch_size, 256), device=device))
 
     def forward(self, spatial, nonspatial, state, target):
         
-        reflex_outputs = self.reflexes(spatial, nonspatial)
-        print(reflex_outputs.sum())
+        #reflex_outputs = self.reflexes(spatial, nonspatial)
+        #print(reflex_outputs.sum())
         selection, new_state = self.selector(spatial, nonspatial, state, target)
-        print(selection.squeeze())
-        selection = selection.unsqueeze(-1)
-        result = selection*reflex_outputs
+        #print(selection.squeeze())
+        #selection = selection.unsqueeze(-1)
+        #result = selection*reflex_outputs
         #print(result.shape) 
-        result = result.sum(axis=2)
-        return torch.tanh(result), new_state
+        #result = result.sum(axis=2)
+        return selection, new_state
 
-    def get_loss(self, spatial, nonspatial, state, target, point):
+    def get_loss(self, spatial, nonspatial, prev_action, state, target, point):
+        
+        loss = nn.CrossEntropyLoss()
         
         d, state = self.forward(spatial, nonspatial, state, target)
-        value = (d-point)
+        # print(d.shape)
+        # print(point.shape)
+        l = loss(d.view(-1, d.shape[-1]), point.view(-1))
 
-        return value*value, state
+        return l, state
+
+    def sample(self, spatial, nonspatial, prev_action, state, target):
+        
+        d, state = self.forward(spatial, nonspatial, state, target)
+        dist = D.Categorical(logits = d)
+        s = dist.sample().squeeze().cpu().numpy()
+
+        return self.kmeans.cluster_centers_[s], state
 
 class BaseModel(nn.Module):
 

@@ -6,9 +6,10 @@ import minerl
 import torch
 from random import shuffle
 import os
+from kmeans import cached_kmeans
 
 def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
-    
+    kmeans = cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
     files = cycle(files)
     while True:
         f = next(files)
@@ -27,8 +28,9 @@ def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
         obs_vector = torch.tensor(obs["vector"], dtype=torch.float32).unsqueeze(1)#.transpose(0,1)
         
         #print("vec")
-        actions = torch.tensor(act["vector"], dtype=torch.float32).unsqueeze(1)#.transpose(0,1)
-        prev_action = torch.cat([torch.zeros((1,1,64)), actions[:-1]], dim=0)
+        encoded = kmeans.predict(act["vector"])
+        actions = torch.tensor(encoded, dtype=torch.int64).unsqueeze(1)#.transpose(0,1)
+        prev_action = torch.cat([torch.zeros((1,1),dtype=torch.int64), actions[:-1]], dim=0)
         l = actions.shape[0]
         for i in range(0, l, batch_size):
             steps += 1

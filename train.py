@@ -20,7 +20,7 @@ from torch.nn.utils import clip_grad_norm_, clip_grad_value_
 from time import time
 from loader import BatchSeqLoader, absolute_file_paths
 from math import sqrt
-#from kmeans import cached_kmeans
+from kmeans import cached_kmeans
 
 
 trains_loaded = True
@@ -33,7 +33,7 @@ from random import shuffle
 from minerl.data import DataPipeline
 
 if trains_loaded:
-    task = Task.init(project_name='MineRL', task_name='multivariate simple prob dia+pic+tre cd')
+    task = Task.init(project_name='MineRL', task_name='kmeans dia+pic+tre')
     logger = task.get_logger()
 
 # All the evaluations will be evaluated on MineRLObtainDiamond-v0 environment
@@ -65,11 +65,11 @@ BATCH_SIZE = 8
 SEQ_LEN = 100
 
 FIT = True
-LOAD = True
+LOAD = False
 FULL = True
 
 def train(model, mode, steps, loader):
-
+    
     if mode != "fit_selector":
         optimizer = Adam(params=model.parameters(), lr=1e-4, weight_decay=1e-6)
     else:
@@ -97,7 +97,7 @@ def train(model, mode, steps, loader):
 
         loader.put_back(hidden)
 
-        loss = loss.sum() / BATCH_SIZE / SEQ_LEN
+        loss = loss.sum() # / BATCH_SIZE / SEQ_LEN
         loss.backward()
         
         losssum += loss.item()
@@ -128,6 +128,7 @@ def train(model, mode, steps, loader):
 
 def main():
     aicrowd_helper.training_start()
+    cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
     """
     This function will be called for training phase.
     """
@@ -138,7 +139,7 @@ def main():
                   absolute_file_paths('data/MineRLObtainIronPickaxeVectorObf-v0')+\
                   absolute_file_paths('data/MineRLTreechopVectorObf-v0')
 
-    model = ProbModel()
+    model = Model()
     shuffle(train_files)
     
     loader = BatchSeqLoader(16, train_files, SEQ_LEN, model)
@@ -147,7 +148,7 @@ def main():
         model.load_state_dict(torch.load("train/model.tm"))
     model.cuda()
     
-    train(model, "train", 100000000, loader)
+    train(model, "train", 150000000, loader)
 
     # model.selector = Selector()
     # model.selector.cuda()
