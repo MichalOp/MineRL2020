@@ -12,7 +12,7 @@ from utility.parser import Parser
 import coloredlogs
 coloredlogs.install(logging.DEBUG)
 
-from model import Model, Selector, ProbModel
+from model import Model
 import torch
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
@@ -31,10 +31,6 @@ except:
 from random import shuffle
 
 from minerl.data import DataPipeline
-
-if trains_loaded:
-    task = Task.init(project_name='MineRL', task_name='kmeans dia+pic+tre')
-    logger = task.get_logger()
 
 # All the evaluations will be evaluated on MineRLObtainDiamond-v0 environment
 MINERL_GYM_ENV = os.getenv('MINERL_GYM_ENV', 'MineRLObtainDiamondVectorObf-v0')
@@ -68,7 +64,15 @@ FIT = True
 LOAD = False
 FULL = True
 
-def train(model, mode, steps, loader):
+def update_loss_dict(old, new):
+    if old is not None:
+        for k in old:
+            old[k] += new[k]
+        return old
+    return new
+
+
+def train(model, mode, steps, loader, logger):
     
     if mode != "fit_selector":
         optimizer = Adam(params=model.parameters(), lr=1e-4, weight_decay=1e-6)
@@ -85,16 +89,18 @@ def train(model, mode, steps, loader):
     t0 = time()
     losssum = 0
     gradsum = 0
+    loss_dict = None
     for i in range(int(steps/ BATCH_SIZE / SEQ_LEN)):
         step+=1
         #print(i)
-        spatial, nonspatial, prev_action, act, hidden = loader.get_batch(BATCH_SIZE)
+        spatial, nonspatial, prev_action, act, repeat, hidden = loader.get_batch(BATCH_SIZE)
         count += BATCH_SIZE*SEQ_LEN
         if mode != "pretrain":
-            loss, hidden = model.get_loss(spatial, nonspatial, prev_action, hidden, torch.zeros(act.shape, dtype=torch.float32, device="cuda"), act)
+            loss, ldict, hidden = model.get_loss(spatial, nonspatial, prev_action, hidden, torch.zeros(act.shape, dtype=torch.float32, device="cuda"), act, repeat)
         else:
-            loss, hidden = model.get_loss(spatial, nonspatial, prev_action, hidden, act, act)
+            loss, ldict, hidden = model.get_loss(spatial, nonspatial, prev_action, hidden, act, act, repeat)
 
+        loss_dict = update_loss_dict(loss_dict, ldict)
         loader.put_back(hidden)
 
         loss = loss.sum() # / BATCH_SIZE / SEQ_LEN
@@ -115,20 +121,29 @@ def train(model, mode, steps, loader):
         if step % 20 == 0:
             print(losssum, count, count/(time()-t0))
             if step > 50 and trains_loaded:
-                logger.report_scalar(title='Training_'+mode, series='loss', value=losssum/20, iteration=int(count))
+                for k in loss_dict:
+                    logger.report_scalar(title='Training_'+mode, series='loss_'+k, value=loss_dict[k]/20, iteration=int(count)) 
+                logger.report_scalar(title='Training_'+mode, series='loss_total', value=losssum/20, iteration=int(count))
                 logger.report_scalar(title='Training_'+mode, series='grad_norm', value=gradsum/20, iteration=int(count))
                 logger.report_scalar(title='Training_'+mode, series='learning_rate', value=float(optimizer.param_groups[0]["lr"]), iteration=int(count))
             losssum = 0
             gradsum = 0
-
+            loss_dict = None
             if mode == "fit_selector":
                 torch.save(model.state_dict(),"train/model_fitted.tm")
             else:
                 torch.save(model.state_dict(),"train/model.tm")
 
 def main():
+    if trains_loaded:
+        task = Task.init(project_name='MineRL', task_name='kmeans repeat conditional dia+pic+tre')
+        logger = task.get_logger()
+    else:
+        logger = None
+
     aicrowd_helper.training_start()
     cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
+    
     """
     This function will be called for training phase.
     """
@@ -148,7 +163,7 @@ def main():
         model.load_state_dict(torch.load("train/model.tm"))
     model.cuda()
     
-    train(model, "train", 150000000, loader)
+    train(model, "train", 150000000, loader, logger)
 
     # model.selector = Selector()
     # model.selector.cuda()
@@ -199,6 +214,8 @@ def main():
     print("ok")
     aicrowd_helper.register_progress(1)
     aicrowd_helper.training_end()
+
+    loader.kill()
     #env.close()
 
 

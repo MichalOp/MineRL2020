@@ -7,13 +7,14 @@ import torch
 from random import shuffle
 import os
 from kmeans import cached_kmeans
+from tqdm import tqdm
 
 def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
     kmeans = cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
-    files = cycle(files)
-    while True:
-        f = next(files)
-        
+
+    data = []
+
+    for f in tqdm(files):
         try:
             d = DataPipeline._load_data_pyfunc(f, -1, None)
         except:
@@ -23,25 +24,55 @@ def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
         obs, act, reward, nextobs, done = d
         #print(len(obs["pov"]))
         #print("start")
-        obs_screen = torch.tensor(obs["pov"], dtype=torch.float32).unsqueeze(1).transpose(2,4)
+        trunc_pov = []
+        trunc_vec = []
+        trunc_act = []
+        skip_act = []
+        encoded = kmeans.predict(act["vector"])
+        prev_act = -1
+        for i in range(len(obs["pov"])):
+            if encoded[i] == prev_act and skip_act[-1] < 40 - 1:
+                skip_act[-1] += 1
+            else:
+                trunc_pov.append(obs["pov"][i])
+                trunc_vec.append(obs["vector"][i])
+                trunc_act.append(encoded[i])
+                skip_act.append(0)
+                prev_act = encoded[i]
+
+        obs_screen = torch.tensor(trunc_pov, dtype=torch.float32).unsqueeze(1).transpose(2,4)
         #print("pov")
-        obs_vector = torch.tensor(obs["vector"], dtype=torch.float32).unsqueeze(1)#.transpose(0,1)
+        obs_vector = torch.tensor(trunc_vec, dtype=torch.float32).unsqueeze(1)#.transpose(0,1)
         
         #print("vec")
-        encoded = kmeans.predict(act["vector"])
-        actions = torch.tensor(encoded, dtype=torch.int64).unsqueeze(1)#.transpose(0,1)
+        actions = torch.tensor(trunc_act, dtype=torch.int64).unsqueeze(1)#.transpose(0,1)
+        repeat = torch.tensor(skip_act, dtype=torch.int64).unsqueeze(1)
         prev_action = torch.cat([torch.zeros((1,1),dtype=torch.int64), actions[:-1]], dim=0)
+
+        data.append((obs_screen, obs_vector, actions, repeat, prev_action))
+
+    data = cycle(data)
+
+    while True:
+        
+        obs_screen, obs_vector, actions, repeat, prev_action = next(data)
+
         l = actions.shape[0]
+
+        #print(l)
+
         for i in range(0, l, batch_size):
             steps += 1
             #print(steps)
-            
             #output = seg_batch['obs'], seg_batch['act'], seg_batch['reward'], seg_batch['next_obs'], seg_batch['done']
             if l < i+batch_size:
                 #print("wut", len(obs["pov"][i:i+batch_size]))
                 break
             
-            pipe.send((obs_screen[i:i+batch_size], obs_vector[i:i+batch_size], prev_action[i:i+batch_size], actions[i:i+batch_size]))
+            if pipe.poll():
+                return
+
+            pipe.send((obs_screen[i:i+batch_size], obs_vector[i:i+batch_size], prev_action[i:i+batch_size], actions[i:i+batch_size], repeat[i:i+batch_size]))
             
             internal_sem.release()
             main_sem.release()
@@ -81,6 +112,9 @@ class ReplayRoller():
 
         return data + (self.hidden,)
 
+    def kill(self):
+        self.pipe_my.send("die")
+        self.sem_consumed.release()
 
     def set_hidden(self, new_hidden):
         self.sem_consumed.release()
@@ -139,19 +173,24 @@ class BatchSeqLoader():
                     if len(data) == batch_size:
                         break
 
-        obs_screen, obs_vector, obs_prev_action, act, states = zip(*data)
+        obs_screen, obs_vector, obs_prev_action, act, repeat, states = zip(*data)
 
         obs_screen = torch.cat(obs_screen, dim=1).cuda()
         obs_vector = torch.cat(obs_vector, dim=1).cuda()
         obs_prev_action = torch.cat(obs_prev_action, dim=1).cuda()
         act = torch.cat(act, dim=1).cuda()
+        repeat = torch.cat(repeat, dim=1).cuda()
         #print(act.shape)
-        return obs_screen, obs_vector, obs_prev_action, act, self.batch_lstm(states)
+        return obs_screen, obs_vector, obs_prev_action, act, repeat, self.batch_lstm(states)
 
     def put_back(self, lstm_state):
         lstm_state = self.unbatch_lstm(lstm_state)
         for i, roller in enumerate(self.current_rollers):
             roller.set_hidden(lstm_state[i])
+
+    def kill(self):
+        for roller in self.rollers:
+            roller.kill()
 
 class dummy_model:
 

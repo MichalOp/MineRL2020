@@ -24,7 +24,7 @@ import cv2
 
 # All the evaluations will be evaluated on MineRLObtainDiamondVectorObf-v0 environment
 MINERL_GYM_ENV = os.getenv('MINERL_GYM_ENV', 'MineRLObtainDiamondVectorObf-v0')
-MINERL_MAX_EVALUATION_EPISODES = int(os.getenv('MINERL_MAX_EVALUATION_EPISODES', 5))
+MINERL_MAX_EVALUATION_EPISODES = int(os.getenv('MINERL_MAX_EVALUATION_EPISODES', 25))
 
 # Parallel testing/inference, **you can override** below value based on compute
 # requirements, etc to save OOM in this phase.
@@ -163,11 +163,11 @@ class MineRLNetworkAgent(MineRLAgentBase):
         Args:
             single_episode_env (Episode): The episode on which to run the agent.
         """
+        reward_sum = 0
         with torch.no_grad():
             obs = single_episode_env.reset()
             done = False
             state = self.model.get_zero_state(1, device=device)
-            i = 0
             s = torch.zeros((1,1,64), dtype=torch.float32, device=device)
             while not done:
                 
@@ -175,17 +175,18 @@ class MineRLNetworkAgent(MineRLAgentBase):
                 #cv2.imshow("xdd", obs["pov"])
                 #cv2.waitKey(200)
                 nonspatial = torch.tensor(obs["vector"], device=device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-                s, state = self.model.sample(spatial, nonspatial, s, state, torch.zeros((1,1,64),dtype=torch.float32,device=device))
-                #print(s)
-                #print(output)
-                #if i%5 == 0:
-                #print(s.shape)
-                i+=1
-                obs,reward,done,_ = single_episode_env.step({"vector":s})
-                # if reward > 0:
-                #     for i in range(20):
-                #         print(reward)
-
+                s, repeat, state = self.model.sample(spatial, nonspatial, s, state, torch.zeros((1,1,64),dtype=torch.float32,device=device))
+                
+                for i in range(repeat+1):
+                    obs,reward,done,_ = single_episode_env.step({"vector":s})
+                    reward_sum += reward
+                    # if reward > 0:
+                    #     for i in range(20):
+                    #         print(reward)
+                    if done:
+                        break
+        
+        # print(reward_sum)
 
 class MineRLRandomAgent(MineRLAgentBase):
     """A random agent"""

@@ -5,6 +5,9 @@ import torch.distributions as D
 import math
 from kmeans import cached_kmeans
 
+import numpy as np
+np.set_printoptions(precision=2, suppress=True)
+
 class ResidualBlock(nn.Module):
 
     def __init__(self,in_layers, size):
@@ -128,24 +131,23 @@ class InputProcessor(nn.Module):
 
         return torch.cat([spatial, nonspatial],dim=-1)
 
-class Selector(nn.Module):
+class Core(nn.Module):
     
     def __init__(self):
         super().__init__()
         self.input_proc = InputProcessor()
         self.lstm = nn.LSTM(256+64, 256, 1)
-        self.selector = nn.Sequential(nn.Linear(256, 256),nn.ReLU(), nn.Linear(256, 120))
+        #self.hidden = nn.Sequential(nn.Linear(256, 256),nn.ReLU())
+        
 
-    def forward(self, spatial, nonspatial, state, target):
+    def forward(self, spatial, nonspatial, state):
         
         processed = self.input_proc.forward(spatial, nonspatial)
-
         lstm_output, new_state = self.lstm(processed, state)
-        #print(lstm_output.shape)
-        #print(target.shape)
-        #cat = torch.cat([lstm_output, target],dim=-1)
-        
-        return self.selector(lstm_output), new_state
+        #hidden = self.hidden(lstm_output)
+
+
+        return lstm_output, new_state
 
 class SubPolicies(nn.Module):
 
@@ -159,49 +161,65 @@ class SubPolicies(nn.Module):
         processed = self.input_proc.forward(spatial, nonspatial)
         return self.reflexes(processed).view(shape[:2]+(10,64))
 
-
-
 class Model(nn.Module):
 
     def __init__(self):
         super().__init__()
         self.kmeans = cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
-        self.selector = Selector()
+        self.core = Core()
+        self.selector = nn.Sequential(nn.Linear(256, 256), nn.ReLU(), nn.Linear(256, 120))
+        self.embedding = nn.Embedding(120, 32)
+        self.repeat = nn.Sequential(nn.Linear(256+32, 256), nn.ReLU(), nn.Linear(256, 40))
         #self.reflexes = SubPolicies()
 
     def get_zero_state(self, batch_size, device="cuda"):
         return (torch.zeros((1, batch_size, 256), device=device), torch.zeros((1, batch_size, 256), device=device))
 
-    def forward(self, spatial, nonspatial, state, target):
+    def compute_front(self, spatial, nonspatial, state):
+        hidden, new_state = self.core(spatial, nonspatial, state)
         
+        return hidden, self.selector(hidden), new_state
+
+    def compute_repeat(self, hidden, action):
+        em = self.embedding(action)
+        return self.repeat(torch.cat([hidden, em], dim=-1))
+
+    def forward(self, spatial, nonspatial, state, target):
+        pass
         #reflex_outputs = self.reflexes(spatial, nonspatial)
         #print(reflex_outputs.sum())
-        selection, new_state = self.selector(spatial, nonspatial, state, target)
+        # hidden, new_state = self.selector(spatial, nonspatial, state, target)
         #print(selection.squeeze())
         #selection = selection.unsqueeze(-1)
         #result = selection*reflex_outputs
         #print(result.shape) 
         #result = result.sum(axis=2)
-        return selection, new_state
+        # return selection, repeat, new_state
 
-    def get_loss(self, spatial, nonspatial, prev_action, state, target, point):
+    def get_loss(self, spatial, nonspatial, prev_action, state, target, point, repeat):
         
         loss = nn.CrossEntropyLoss()
         
-        d, state = self.forward(spatial, nonspatial, state, target)
+        hidden, d, state = self.compute_front(spatial, nonspatial, state)
         # print(d.shape)
         # print(point.shape)
-        l = loss(d.view(-1, d.shape[-1]), point.view(-1))
+        r = self.compute_repeat(hidden, point)
 
-        return l, state
+        l1 = loss(d.view(-1, d.shape[-1]), point.view(-1))
+        l2 = loss(r.view(-1, r.shape[-1]), repeat.view(-1))
+
+        return l1 + l2, {"action":l1.item(), "repeat":l2.item()}, state
 
     def sample(self, spatial, nonspatial, prev_action, state, target):
-        
-        d, state = self.forward(spatial, nonspatial, state, target)
+        hidden, d, state = self.compute_front(spatial, nonspatial, state)
         dist = D.Categorical(logits = d)
-        s = dist.sample().squeeze().cpu().numpy()
-
-        return self.kmeans.cluster_centers_[s], state
+        #print(torch.softmax(d,dim=-1).squeeze().cpu().numpy())
+        s = dist.sample()
+        r = self.compute_repeat(hidden, s)
+        rep_dist = D.Categorical(logits = r)
+        s = s.squeeze().cpu().numpy()
+        rs = rep_dist.sample().squeeze().cpu().numpy()
+        return self.kmeans.cluster_centers_[s], rs, state
 
 class BaseModel(nn.Module):
 
