@@ -90,15 +90,17 @@ def train(model, mode, steps, loader, logger):
     losssum = 0
     gradsum = 0
     loss_dict = None
+    modcount = 0
     for i in range(int(steps/ BATCH_SIZE / SEQ_LEN)):
         step+=1
         #print(i)
-        spatial, nonspatial, prev_action, act, repeat, hidden = loader.get_batch(BATCH_SIZE)
+        spatial, nonspatial, prev_action, act, _, _, hidden = loader.get_batch(BATCH_SIZE)
         count += BATCH_SIZE*SEQ_LEN
+        modcount += BATCH_SIZE*SEQ_LEN
         if mode != "pretrain":
-            loss, ldict, hidden = model.get_loss(spatial, nonspatial, prev_action, hidden, torch.zeros(act.shape, dtype=torch.float32, device="cuda"), act, repeat)
+            loss, ldict, hidden = model.get_loss(spatial, nonspatial, prev_action, hidden, torch.zeros(act.shape, dtype=torch.float32, device="cuda"), act)
         else:
-            loss, ldict, hidden = model.get_loss(spatial, nonspatial, prev_action, hidden, act, act, repeat)
+            loss, ldict, hidden = model.get_loss(spatial, nonspatial, prev_action, hidden, act, act)
 
         loss_dict = update_loss_dict(loss_dict, ldict)
         loader.put_back(hidden)
@@ -117,13 +119,21 @@ def train(model, mode, steps, loader, logger):
         optimizer.step()
         optimizer.zero_grad()
         scheduler.step()
-            
+        
+        if modcount >= steps/20:
+            torch.save(model.state_dict(),"train/model.tm")
+            #torch.save(model.state_dict(),f"testing/model_{count//int(steps/20)}.tm")
+            modcount -= int(steps/20)
+            if count//int(steps/20) == 15:
+                break
+
         if step % 20 == 0:
             print(losssum, count, count/(time()-t0))
+            aicrowd_helper.register_progress(count/steps)
             if step > 50 and trains_loaded:
                 for k in loss_dict:
                     logger.report_scalar(title='Training_'+mode, series='loss_'+k, value=loss_dict[k]/20, iteration=int(count)) 
-                logger.report_scalar(title='Training_'+mode, series='loss_total', value=losssum/20, iteration=int(count))
+                logger.report_scalar(title='Training_'+mode, series='loss', value=losssum/20, iteration=int(count))
                 logger.report_scalar(title='Training_'+mode, series='grad_norm', value=gradsum/20, iteration=int(count))
                 logger.report_scalar(title='Training_'+mode, series='learning_rate', value=float(optimizer.param_groups[0]["lr"]), iteration=int(count))
             losssum = 0
@@ -136,7 +146,7 @@ def train(model, mode, steps, loader, logger):
 
 def main():
     if trains_loaded:
-        task = Task.init(project_name='MineRL', task_name='kmeans repeat conditional dia+pic+tre')
+        task = Task.init(project_name='MineRL', task_name='kmeans dia+pic+tre 512 just to check')
         logger = task.get_logger()
     else:
         logger = None

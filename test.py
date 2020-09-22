@@ -24,11 +24,11 @@ import cv2
 
 # All the evaluations will be evaluated on MineRLObtainDiamondVectorObf-v0 environment
 MINERL_GYM_ENV = os.getenv('MINERL_GYM_ENV', 'MineRLObtainDiamondVectorObf-v0')
-MINERL_MAX_EVALUATION_EPISODES = int(os.getenv('MINERL_MAX_EVALUATION_EPISODES', 25))
+MINERL_MAX_EVALUATION_EPISODES = int(os.getenv('MINERL_MAX_EVALUATION_EPISODES', 100))
 
 # Parallel testing/inference, **you can override** below value based on compute
 # requirements, etc to save OOM in this phase.
-EVALUATION_THREAD_COUNT = int(os.getenv('EPISODES_EVALUATION_THREAD_COUNT', 1))
+EVALUATION_THREAD_COUNT = int(os.getenv('EPISODES_EVALUATION_THREAD_COUNT', 4))
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -139,6 +139,8 @@ class MineRLMatrixAgent(MineRLAgentBase):
         while not done:
             obs,reward,done,_ = single_episode_env.step(self.act(self.flatten_obs(obs)))
 
+rewards = []
+
 class MineRLNetworkAgent(MineRLAgentBase):
     """
     An example random agent. 
@@ -175,18 +177,18 @@ class MineRLNetworkAgent(MineRLAgentBase):
                 #cv2.imshow("xdd", obs["pov"])
                 #cv2.waitKey(200)
                 nonspatial = torch.tensor(obs["vector"], device=device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-                s, repeat, state = self.model.sample(spatial, nonspatial, s, state, torch.zeros((1,1,64),dtype=torch.float32,device=device))
+                s, state = self.model.sample(spatial, nonspatial, s, state, torch.zeros((1,1,64),dtype=torch.float32,device=device))
                 
-                for i in range(repeat+1):
+                for i in range(1):
                     obs,reward,done,_ = single_episode_env.step({"vector":s})
                     reward_sum += reward
-                    # if reward > 0:
-                    #     for i in range(20):
-                    #         print(reward)
+                    if reward > 0:
+                        rewards.append(reward)
+                        print(reward_sum)
                     if done:
                         break
         
-        # print(reward_sum)
+        
 
 class MineRLRandomAgent(MineRLAgentBase):
     """A random agent"""
@@ -239,6 +241,8 @@ def main():
     # wait fo the evaluation to finish
     for thread in evaluator_threads:
         thread.join()
+
+    print("average:", sum(rewards)/MINERL_MAX_EVALUATION_EPISODES)
 
 if __name__ == "__main__":
     main()
