@@ -28,7 +28,7 @@ MINERL_MAX_EVALUATION_EPISODES = int(os.getenv('MINERL_MAX_EVALUATION_EPISODES',
 
 # Parallel testing/inference, **you can override** below value based on compute
 # requirements, etc to save OOM in this phase.
-EVALUATION_THREAD_COUNT = int(os.getenv('EPISODES_EVALUATION_THREAD_COUNT', 4))
+EVALUATION_THREAD_COUNT = int(os.getenv('EPISODES_EVALUATION_THREAD_COUNT', 1))
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -155,7 +155,8 @@ class MineRLNetworkAgent(MineRLAgentBase):
         """
         # Some helpful constants from the environment.
         self.model = Model()
-        self.model.load_state_dict(torch.load("train/model.tm", map_location=device))
+        self.model.load_state_dict(torch.load("train/model_rl.tm", map_location=device))
+        #self.model.load_state_dict(torch.load("train/model.tm", map_location=device))
         self.model.to(device)
 
 
@@ -177,7 +178,7 @@ class MineRLNetworkAgent(MineRLAgentBase):
                 #cv2.imshow("xdd", obs["pov"])
                 #cv2.waitKey(200)
                 nonspatial = torch.tensor(obs["vector"], device=device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-                s, state = self.model.sample(spatial, nonspatial, s, state, torch.zeros((1,1,64),dtype=torch.float32,device=device))
+                s, act, state = self.model.sample(spatial, nonspatial, s, state, torch.zeros((1,1,64),dtype=torch.float32,device=device))
                 
                 for i in range(1):
                     obs,reward,done,_ = single_episode_env.step({"vector":s})

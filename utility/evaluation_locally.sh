@@ -27,7 +27,7 @@ eval "python3 run.py --seeds 1 $EXTRAOUTPUT &"
 trap "kill -11 $! > /dev/null 2>&1;" EXIT
 
 # Run the evaluation
-sleep 2
+sleep 5
 export MINERL_INSTANCE_MANAGER_REMOTE="1"
 export EVALUATION_STAGE='testing'
 export EVALUATION_RUNNING_ON='local'

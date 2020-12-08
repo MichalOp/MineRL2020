@@ -44,7 +44,7 @@ def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
             if l - i < batch_size:
                 break
 
-            pipe.send((obs_screen[i:i+batch_size], obs_vector[i:i+batch_size], prev_action[i:i+batch_size], actions[i:i+batch_size], running[i:i+batch_size], rewards[i:i+batch_size]))
+            pipe.send((obs_screen[i:i+batch_size], obs_vector[i:i+batch_size], actions[i:i+batch_size], rewards[i:i+batch_size]))
             
             if pipe.poll():
                 return
@@ -133,7 +133,7 @@ class BatchSeqLoader():
 
         return output
 
-    def get_batch(self, batch_size):
+    def get_batch(self, batch_size, additional_data):
 
         shuffle(self.rollers)
         data, self.current_rollers = [],[]
@@ -147,8 +147,8 @@ class BatchSeqLoader():
                     self.current_rollers.append(roller)
                     if len(data) == batch_size:
                         break
-
-        data = list(zip(*data))
+        
+        data = list(zip(*(data+additional_data)))
         output = []
         for d in data[:-1]:
             padded = pad_sequence(d).cuda()

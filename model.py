@@ -3,10 +3,12 @@ from torch import nn
 from torch.nn import functional as F
 import torch.distributions as D
 import math
-from kmeans import cached_kmeans
+from kmeans import cached_kmeans, default_n
 
 import numpy as np
 np.set_printoptions(precision=2, suppress=True)
+
+gamma = 0.995
 
 class ResidualBlock(nn.Module):
 
@@ -126,10 +128,11 @@ class InputProcessor(nn.Module):
 
         new_shape = spatial.shape
         spatial = spatial.view(shape[:2]+(-1,))
+        features_true = spatial.view(shape[:2]+(64,8,8))
         nonspatial = self.nonspatial_reshape(nonspatial)
         spatial = self.spatial_reshape(spatial)
 
-        return torch.cat([spatial, nonspatial],dim=-1)
+        return torch.cat([spatial, nonspatial],dim=-1), features_true
 
 class Core(nn.Module):
     
@@ -142,12 +145,12 @@ class Core(nn.Module):
 
     def forward(self, spatial, nonspatial, state):
         
-        processed = self.input_proc.forward(spatial, nonspatial)
+        processed, features = self.input_proc.forward(spatial, nonspatial)
         lstm_output, new_state = self.lstm(processed, state)
         #lstm_output = self.hidden(processed)
 
 
-        return lstm_output, new_state
+        return lstm_output, new_state, features
 
 class SubPolicies(nn.Module):
 
@@ -161,25 +164,70 @@ class SubPolicies(nn.Module):
         processed = self.input_proc.forward(spatial, nonspatial)
         return self.reflexes(processed).view(shape[:2]+(10,64))
 
+class Values(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.qs = nn.Sequential(nn.Linear(512, 512), nn.ReLU(), nn.Linear(512, default_n))
+        self.value = nn.Sequential(nn.Linear(512, 512), nn.ReLU(), nn.Linear(512, 1))
+
+    def forward(self, x):
+        
+        qs = self.qs(x)
+        advantages = qs - qs.mean(axis=-1, keepdims=True)
+        v = self.value(x)
+
+        return v+advantages
+
 class Model(nn.Module):
 
     def __init__(self):
         super().__init__()
         self.kmeans = cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
         self.core = Core()
-        self.selector = nn.Sequential(nn.Linear(512, 512), nn.ReLU(), nn.Linear(512, 120))
+        self.selector = nn.Sequential(nn.Linear(512, 512), nn.ReLU(), nn.Linear(512, default_n))
+        self.auxiliary = nn.Sequential(nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1), nn.ReLU(),
+                                       nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1), nn.ReLU())
+        self.auxiliary_screen = nn.ConvTranspose2d(128, default_n, kernel_size=4, stride=2, padding=1)
+        self.auxiliary_screen_v = nn.ConvTranspose2d(128, 1, kernel_size=4, stride=2, padding=1)
+        self.auxiliary_features = nn.ConvTranspose2d(128, default_n, kernel_size=4, stride=2, padding=1)
+        self.auxiliary_features_v = nn.ConvTranspose2d(128, 1, kernel_size=4, stride=2, padding=1)
+
+        self.values = Values()
         #self.embedding = nn.Embedding(120, 32)
         #self.repeat = nn.Sequential(nn.Linear(256+32, 256), nn.ReLU(), nn.Linear(256, 40))
-        #self.values = nn.Sequential(nn.Linear(256, 256), nn.ReLU(), nn.Linear(256, 120))
+        
         #self.reflexes = SubPolicies()
 
     def get_zero_state(self, batch_size, device="cuda"):
         return (torch.zeros((1, batch_size, 512), device=device), torch.zeros((1, batch_size, 512), device=device))
 
     def compute_front(self, spatial, nonspatial, state):
-        hidden, new_state = self.core(spatial, nonspatial, state)
+        hidden, new_state, features = self.core(spatial, nonspatial, state)
         
-        return hidden, self.selector(hidden), new_state
+        return hidden, self.selector(hidden), new_state, features
+
+    def compute_auxiliary(self, hidden):
+        
+        front_s = hidden.shape[:2]
+
+        hidden = hidden.view((-1,hidden.shape[2],1,1))
+        aux = self.auxiliary(hidden)
+        a_s = self.auxiliary_screen(aux)
+        a_s_v = self.auxiliary_screen_v(aux)
+        a_f = self.auxiliary_features(aux)
+        a_f_v = self.auxiliary_features_v(aux)
+
+        a_s = a_s - a_s.mean(dim=1,keepdim=True)
+        a_f = a_s - a_f.mean(dim=1,keepdim=True)
+
+        q_s = a_s + a_s_v
+        q_f = a_f + a_f_v
+        
+        # print(q_s.shape)
+        # print(q_f.shape)
+        return q_s.view(front_s + q_s.shape[1:]), q_f.view(front_s + q_f.shape[1:])
+
 
     # def compute_repeat(self, hidden, action):
     #     em = self.embedding(action)
@@ -197,11 +245,24 @@ class Model(nn.Module):
         #result = result.sum(axis=2)
         # return selection, repeat, new_state
 
-    def get_loss(self, spatial, nonspatial, prev_action, state, target, point):
+    def get_loss(self, spatial, nonspatial, prev_action, state, target, point, rewards):
         
         loss = nn.CrossEntropyLoss()
         
         hidden, d, state = self.compute_front(spatial, nonspatial, state)
+
+        values = self.values(hidden)
+        
+        detached_values = values.detach()
+        detached_probs = F.softmax(d.detach(),dim=-1)
+        
+        next_vals = (detached_values*detached_probs).sum(dim=-1)
+
+        value_targets = rewards[:-1] + gamma*next_vals[1:]
+        #print(values.shape, point.shape)
+        chosen_values = torch.gather(values, 2, point.unsqueeze(-1)).squeeze()[:-1]
+        loss2 = torch.nn.MSELoss()
+        l2 = loss2(chosen_values, value_targets)
         # print(d.shape)
         # print(point.shape)
         #r = self.compute_repeat(hidden, point)
@@ -209,18 +270,89 @@ class Model(nn.Module):
         l1 = loss(d.view(-1, d.shape[-1]), point.view(-1))
         #l2 = loss(r.view(-1, r.shape[-1]), repeat.view(-1))
 
-        return l1, {"action":l1.item()}, state
+        return l1+l2, {"action":l1.item(), "values":l2.item()}, state
+
+    def soft_update(self, source, tau):
+        for t, s in zip(self.parameters(), source.parameters()):
+            t.data.copy_(t.data * (1.0 - tau) + s.data * tau)
+
+    def get_loss_rl(self, target_model, spatial, nonspatial, state, point, rewards):
+
+        hidden, d, state, features = self.compute_front(spatial, nonspatial, state)
+        probs = F.softmax(d,dim=-1)
+
+        with torch.no_grad():
+            hidden_t, target_d, _, _ = target_model.compute_front(spatial, nonspatial, state)
+            target_values = target_model.values(hidden_t)
+            target_probs = probs.detach()
+            next_vals = (target_values*target_probs).sum(dim=-1)
+
+            features = features.detach()
+            aux_r_feat = (torch.abs(features[:-1] - features[1:])).sum(dim=2, keepdim=True)
+
+            m = nn.MaxPool2d(8, stride=8)
+            aux_r_screen = (torch.abs(spatial[:-1] - spatial[1:])).sum(dim=2, keepdim=True)
+            aux_r_screen = m(aux_r_screen.view((-1,)+aux_r_screen.shape[2:])).view(aux_r_feat.shape)
+
+            aux_screen_target, aux_feat_target = target_model.compute_auxiliary(hidden_t)
+            aux_screen_target,_ = aux_screen_target.max(dim=2, keepdim=True)
+            aux_feat_target,_ = aux_feat_target.max(dim=2, keepdim=True)
+
+        loss = nn.CrossEntropyLoss()
+        loss2 = torch.nn.MSELoss()
+
+        aux_screen, aux_feat = self.compute_auxiliary(hidden)
+        
+        pick = point.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+        pick = pick.repeat(1,1,1,8,8)
+
+        aux_screen = torch.gather(aux_screen,2, pick)
+        # print(aux_screen.shape)
+        # print(aux_screen_target.shape)
+        aux_feat = torch.gather(aux_feat,2, pick)
+        # print(aux_r_screen.shape)
+        loss_aux_screen = loss2(aux_screen[:-1], aux_r_screen + gamma*aux_screen_target[1:])*0.001
+        loss_aux_feat = loss2(aux_feat[:-1], aux_r_feat + gamma*aux_feat_target[1:])*0.001
+
+        values = self.values(hidden)
+        
+        detached_values = values.detach()
+        
+
+        value_targets = rewards[:-1] + gamma*next_vals[1:]
+        #print(values.shape, point.shape)
+        chosen_values = torch.gather(values, 2, point.unsqueeze(-1)).squeeze(dim=-1)[:-1]
+        
+        l2 = loss2(chosen_values, value_targets)
+
+        shape = probs.shape
+        l3 = loss(d.view(-1, d.shape[-1]), point.view(-1))
+        l1 = -(probs * detached_values).sum()/(shape[0]*shape[1])
+        entropy = (probs*torch.log(probs+0.00001)).sum()/(shape[0]*shape[1])*0.05
+
+        return l1+l2+entropy+loss_aux_feat+loss_aux_screen,\
+        {"action":l1.item(),
+         "values":l2.item(),
+         "stability":l3.item(), 
+         "entropy":entropy.item(),
+         "aux_screen":loss_aux_screen.item(),
+         "aux_features":loss_aux_feat.item()},\
+        state
+
+
 
     def sample(self, spatial, nonspatial, prev_action, state, target):
-        hidden, d, state = self.compute_front(spatial, nonspatial, state)
+        hidden, d, state, _ = self.compute_front(spatial, nonspatial, state)
         dist = D.Categorical(logits = d)
+        values = self.values(hidden)
+        #print(values.cpu().numpy())
         #print(torch.softmax(d,dim=-1).squeeze().cpu().numpy())
-        s = dist.sample()
+        sam = dist.sample()
         # r = self.compute_repeat(hidden, s)
         # rep_dist = D.Categorical(logits = r)
-        s = s.squeeze().cpu().numpy()
+        s = sam.squeeze().cpu().numpy()
         # rs = rep_dist.sample().squeeze().cpu().numpy()
-        return self.kmeans.cluster_centers_[s], state
+        return self.kmeans.cluster_centers_[s], sam, state
 
 class BaseModel(nn.Module):
 

@@ -26,9 +26,9 @@ if [[ " $@ " =~ " --nvidia " ]]; then
     sudo nvidia-docker run \
     --net=host \
     --user 0 \
-    -v $(PWD)/data:/home/aicrowd/data \
-    -v $(PWD)/performance:/home/aicrowd/performance \
-    -v $(PWD)/.gradle:/home/aicrowd/.gradle \
+    -v ${PWD}/data:/home/aicrowd/data \
+    -v ${PWD}/performance:/home/aicrowd/performance \
+    -v ${PWD}/.gradle:/home/aicrowd/.gradle \
     -e CROWDAI_DEBUG_MODE=True \
     -it ${IMAGE_NAME}:${IMAGE_TAG} \
     /bin/bash -c "echo \"Staring docker evaluation...\"; xvfb-run -a ./utility/evaluation_locally.sh ${ARGS}"
@@ -36,9 +36,9 @@ else
     echo "NOTE: To run your submission with nvidia drivers locally, use \"--nvidia\" with this script"
     sudo docker run \
     --net=host \
-    -v $(PWD)/data:/home/aicrowd/data \
-    -v $(PWD)/performance:/home/aicrowd/performance \
-    -v $(PWD)/.gradle:/home/aicrowd/.gradle \
+    -v ${PWD}/data:/home/aicrowd/data \
+    -v ${PWD}/performance:/home/aicrowd/performance \
+    -v ${PWD}/.gradle:/home/aicrowd/.gradle \
     -e CROWDAI_DEBUG_MODE=True \
     -it ${IMAGE_NAME}:${IMAGE_TAG} \
     /bin/bash -c "echo \"Staring docker evaluation...\"; xvfb-run -a ./utility/evaluation_locally.sh ${ARGS}"
