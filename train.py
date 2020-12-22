@@ -57,7 +57,7 @@ parser = Parser('performance/',
                 submission_timeout=MINERL_TRAINING_TIMEOUT*60,
                 initial_poll_timeout=600)
 
-BATCH_SIZE = 8
+BATCH_SIZE = 4
 SEQ_LEN = 100
 
 FIT = True
@@ -122,10 +122,10 @@ def train(model, mode, steps, loader, logger):
         
         if modcount >= steps/20:
             torch.save(model.state_dict(),"train/model.tm")
-            #torch.save(model.state_dict(),f"testing/model_{count//int(steps/20)}.tm")
+            torch.save(model.state_dict(),f"testing/model_{count//int(steps/20)}.tm")
             modcount -= int(steps/20)
-            if count//int(steps/20) == 15:
-                break
+            # if count//int(steps/20) == 15:
+            #     break
 
         if step % 20 == 0:
             print(losssum, count, count/(time()-t0))
@@ -146,7 +146,7 @@ def train(model, mode, steps, loader, logger):
 
 def main():
     if trains_loaded:
-        task = Task.init(project_name='MineRL', task_name='kmeans dia+pic+tre 512 just to check')
+        task = Task.init(project_name='MineRL', task_name='kmeans pic+pic+tre 512 with flips and bigger network higher lr')
         logger = task.get_logger()
     else:
         logger = None
@@ -160,7 +160,7 @@ def main():
     # How to sample minerl data is document here:
     # http://minerl.io/docs/tutorials/data_sampling.html
     #data = minerl.data.make('MineRLObtainDiamondVectorObf-v0', data_dir='data/',num_workers=6)
-    train_files = absolute_file_paths('data/MineRLObtainDiamondVectorObf-v0')+\
+    train_files = absolute_file_paths('data/MineRLObtainIronPickaxeVectorObf-v0')+\
                   absolute_file_paths('data/MineRLObtainIronPickaxeVectorObf-v0')+\
                   absolute_file_paths('data/MineRLTreechopVectorObf-v0')
 

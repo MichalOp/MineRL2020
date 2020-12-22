@@ -4,6 +4,7 @@ import select
 import time
 import logging
 import os
+os.environ["OMP_NUM_THREADS"] = "1"
 import threading
 
 
@@ -31,6 +32,7 @@ MINERL_MAX_EVALUATION_EPISODES = int(os.getenv('MINERL_MAX_EVALUATION_EPISODES',
 EVALUATION_THREAD_COUNT = int(os.getenv('EPISODES_EVALUATION_THREAD_COUNT', 4))
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
+
 
 class EpisodeDone(Exception):
     pass
@@ -155,7 +157,9 @@ class MineRLNetworkAgent(MineRLAgentBase):
         """
         # Some helpful constants from the environment.
         self.model = Model()
-        self.model.load_state_dict(torch.load("train/model.tm", map_location=device))
+        # self.model.load_state_dict(torch.load("train/model.tm", map_location=device))
+        self.model.load_state_dict(torch.load("testing/model_20.tm", map_location=device))
+        
         self.model.to(device)
 
 
@@ -175,8 +179,9 @@ class MineRLNetworkAgent(MineRLAgentBase):
                 
                 spatial = torch.tensor(obs["pov"], device=device, dtype=torch.float32).unsqueeze(0).unsqueeze(0).transpose(2,4)
                 #cv2.imshow("xdd", obs["pov"])
-                #cv2.waitKey(200)
-                nonspatial = torch.tensor(obs["vector"], device=device, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+                # cv2.waitKey(30)
+                nonspatial = torch.cat([torch.tensor(obs["vector"], device=device, dtype=torch.float32), 
+                                        torch.ones((2,), device=device,dtype=torch.float32)], dim=0).unsqueeze(0).unsqueeze(0)
                 s, state = self.model.sample(spatial, nonspatial, s, state, torch.zeros((1,1,64),dtype=torch.float32,device=device))
                 
                 for i in range(1):
