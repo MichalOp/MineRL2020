@@ -158,7 +158,7 @@ class MineRLNetworkAgent(MineRLAgentBase):
         # Some helpful constants from the environment.
         self.model = Model()
         # self.model.load_state_dict(torch.load("train/model.tm", map_location=device))
-        self.model.load_state_dict(torch.load("testing/model_20.tm", map_location=device))
+        self.model.load_state_dict(torch.load("testing/model_18.tm", map_location=device))
         
         self.model.to(device)
 

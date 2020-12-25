@@ -127,14 +127,14 @@ def train(model, mode, steps, loader, logger):
             # if count//int(steps/20) == 15:
             #     break
 
-        if step % 20 == 0:
+        if step % 40 == 0:
             print(losssum, count, count/(time()-t0))
             aicrowd_helper.register_progress(count/steps)
             if step > 50 and trains_loaded:
                 for k in loss_dict:
-                    logger.report_scalar(title='Training_'+mode, series='loss_'+k, value=loss_dict[k]/20, iteration=int(count)) 
-                logger.report_scalar(title='Training_'+mode, series='loss', value=losssum/20, iteration=int(count))
-                logger.report_scalar(title='Training_'+mode, series='grad_norm', value=gradsum/20, iteration=int(count))
+                    logger.report_scalar(title='Training_'+mode, series='loss_'+k, value=loss_dict[k]/40, iteration=int(count)) 
+                logger.report_scalar(title='Training_'+mode, series='loss', value=losssum/40, iteration=int(count))
+                logger.report_scalar(title='Training_'+mode, series='grad_norm', value=gradsum/40, iteration=int(count))
                 logger.report_scalar(title='Training_'+mode, series='learning_rate', value=float(optimizer.param_groups[0]["lr"]), iteration=int(count))
             losssum = 0
             gradsum = 0
@@ -146,7 +146,7 @@ def train(model, mode, steps, loader, logger):
 
 def main():
     if trains_loaded:
-        task = Task.init(project_name='MineRL', task_name='kmeans pic+pic+tre 512 with flips and bigger network higher lr')
+        task = Task.init(project_name='MineRL', task_name='kmeans pic+pic+tre 1024 + flips whatever')
         logger = task.get_logger()
     else:
         logger = None
