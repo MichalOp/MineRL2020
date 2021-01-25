@@ -25,7 +25,7 @@ from kmeans import cached_kmeans
 
 trains_loaded = True
 try:
-    from trains import Task
+    from clearml import Task
 except:
     trains_loaded = False
 from random import shuffle
@@ -63,6 +63,8 @@ SEQ_LEN = 100
 FIT = True
 LOAD = False
 FULL = True
+ONLINE = True
+
 
 def update_loss_dict(old, new):
     if old is not None:
@@ -72,8 +74,9 @@ def update_loss_dict(old, new):
     return new
 
 
+
 def train(model, mode, steps, loader, logger):
-    
+    torch.set_num_threads(1)
     if mode != "fit_selector":
         optimizer = Adam(params=model.parameters(), lr=1e-4, weight_decay=1e-6)
     else:
@@ -121,11 +124,14 @@ def train(model, mode, steps, loader, logger):
         scheduler.step()
         
         if modcount >= steps/20:
-            torch.save(model.state_dict(),"train/model.tm")
-            torch.save(model.state_dict(),f"testing/model_{count//int(steps/20)}.tm")
+            if ONLINE:
+                torch.save(model.state_dict(),"train/model.tm")
+            else:
+                torch.save(model.state_dict(),f"testing/model_{count//int(steps/20)}.tm")
             modcount -= int(steps/20)
-            # if count//int(steps/20) == 15:
-            #     break
+            if ONLINE:
+                if count//int(steps/20) == 14:
+                    break
 
         if step % 40 == 0:
             print(losssum, count, count/(time()-t0))

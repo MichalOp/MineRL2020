@@ -11,6 +11,7 @@ from tqdm import tqdm
 from torch.nn.utils.rnn import pad_sequence
 
 def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
+    torch.set_num_threads(1)
     kmeans = cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
 
     files = cycle(files)
