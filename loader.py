@@ -6,11 +6,12 @@ import minerl
 import torch
 from random import shuffle, random
 import os
+import sys
 from kmeans import cached_kmeans
 from tqdm import tqdm
 from torch.nn.utils.rnn import pad_sequence
 
-def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
+def loader(files, pipe, main_sem, internal_sem, batch_size):
     torch.set_num_threads(1)
     kmeans = cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
 
@@ -59,15 +60,20 @@ def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
             
             if l - i < batch_size:
                 break
+            
+            internal_sem.release()
+            main_sem.release()
+
+            msg = pipe.recv()
+            if msg == "GET":
+                pass
+            elif msg == "STOP":
+                print("Shutting down", file=sys.stderr)
+                return
 
             pipe.send((obs_screen[i:i+batch_size], obs_vector[i:i+batch_size], prev_action[i:i+batch_size], actions[i:i+batch_size], running[i:i+batch_size], rewards[i:i+batch_size]))
             
-            if pipe.poll():
-                return
-
-            internal_sem.release()
-            main_sem.release()
-            consumed_sem.acquire()
+            
 
 
 
@@ -78,14 +84,13 @@ class ReplayRoller():
         self.sem = sem
         self.model = model
         self.in_sem = mp.Semaphore(0)
-        self.sem_consumed = mp.Semaphore(prefetch)
         self.data = []
         self.hidden = self.model.get_zero_state(1)
         #print(self.hidden)
         self.hidden = (self.hidden[0].cuda(),self.hidden[1].cuda())
         self.pipe_my, pipe_other = mp.Pipe()
         self.files = files_queue
-        self.loader = mp.Process(target=loader,args=(self.files,pipe_other,self.sem,self.in_sem, self.sem_consumed, self.batch_size))
+        self.loader = mp.Process(target=loader,args=(self.files,pipe_other,self.sem,self.in_sem, self.batch_size))
         self.loader.start()
 
 
@@ -94,6 +99,7 @@ class ReplayRoller():
         if not self.in_sem.acquire(block=False):
             return []
 
+        self.pipe_my.send("GET")
         data = self.pipe_my.recv()
 
         while data == "RESET":
@@ -104,11 +110,10 @@ class ReplayRoller():
         return data + (self.hidden,)
 
     def kill(self):
-        self.pipe_my.send("die")
-        self.sem_consumed.release()
+        self.pipe_my.send("STOP")
+        self.loader.join()
 
     def set_hidden(self, new_hidden):
-        self.sem_consumed.release()
         self.hidden = new_hidden
 
 

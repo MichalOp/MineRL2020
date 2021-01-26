@@ -4,6 +4,7 @@ import select
 import time
 import logging
 import os
+import sys
 
 import aicrowd_helper
 import gym
@@ -23,6 +24,9 @@ from math import sqrt
 from kmeans import cached_kmeans
 
 
+
+
+ONLINE = True
 trains_loaded = True
 try:
     from clearml import Task
@@ -44,7 +48,7 @@ MINERL_TRAINING_MAX_INSTANCES = int(os.getenv('MINERL_TRAINING_MAX_INSTANCES', 5
 MINERL_TRAINING_TIMEOUT = int(os.getenv('MINERL_TRAINING_TIMEOUT_MINUTES', 4*24*60))
 # The dataset is available in data/ directory from repository root.
 MINERL_DATA_ROOT = os.getenv('MINERL_DATA_ROOT', 'data/')
-print(MINERL_DATA_ROOT)
+print(MINERL_DATA_ROOT, file=sys.stderr)
 
 # Optional: You can view best effort status of your instances with the help of parser.py
 # This will give you current state like number of steps completed, instances launched and so on. Make your you keep a tap on the numbers to avoid breaching any limits.
@@ -63,8 +67,6 @@ SEQ_LEN = 100
 FIT = True
 LOAD = False
 FULL = True
-ONLINE = True
-
 
 def update_loss_dict(old, new):
     if old is not None:
@@ -134,9 +136,9 @@ def train(model, mode, steps, loader, logger):
                     break
 
         if step % 40 == 0:
-            print(losssum, count, count/(time()-t0))
+            print(losssum, count, count/(time()-t0), file=sys.stderr)
             aicrowd_helper.register_progress(count/steps)
-            if step > 50 and trains_loaded:
+            if step > 50 and trains_loaded and not ONLINE:
                 for k in loss_dict:
                     logger.report_scalar(title='Training_'+mode, series='loss_'+k, value=loss_dict[k]/40, iteration=int(count)) 
                 logger.report_scalar(title='Training_'+mode, series='loss', value=losssum/40, iteration=int(count))
@@ -151,15 +153,16 @@ def train(model, mode, steps, loader, logger):
                 torch.save(model.state_dict(),"train/model.tm")
 
 def main():
-    if trains_loaded:
+    if trains_loaded and not ONLINE:
         task = Task.init(project_name='MineRL', task_name='kmeans pic+pic+tre 1024 + flips whatever')
         logger = task.get_logger()
     else:
         logger = None
 
-    aicrowd_helper.training_start()
-    cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
+    # aicrowd_helper.training_start()
     
+    cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
+    print("lets gooo", file=sys.stderr)
     """
     This function will be called for training phase.
     """
@@ -178,9 +181,10 @@ def main():
     if LOAD:
         model.load_state_dict(torch.load("train/model.tm"))
     model.cuda()
-    
+    if not ONLINE:
+        aicrowd_helper.training_start()
     train(model, "train", 150000000, loader, logger)
-
+    
     # model.selector = Selector()
     # model.selector.cuda()
     # aicrowd_helper.register_progress(0.5)
@@ -227,9 +231,10 @@ def main():
     # Save trained model to train/ directory
     # Training 100% Completed
     torch.save(model.state_dict(),"train/model.tm")
-    print("ok")
+    print("ok", file=sys.stderr)
     aicrowd_helper.register_progress(1)
-    aicrowd_helper.training_end()
+    if not ONLINE:
+        aicrowd_helper.training_end()
 
     loader.kill()
     #env.close()
