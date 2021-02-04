@@ -1,5 +1,5 @@
 from minerl.data import DataPipeline
-import torch.multiprocessing as mp
+import threading as mp
 from itertools import cycle
 from minerl.data.util import minibatch_gen
 import minerl
@@ -10,6 +10,29 @@ import sys
 from kmeans import cached_kmeans
 from tqdm import tqdm
 from torch.nn.utils.rnn import pad_sequence
+
+from queue import Queue
+
+class PPipeEnd:
+
+    def __init__(self, in_q, out_q):
+        self.in_q = in_q
+        self.out_q= out_q
+
+    def send(self,data):
+        self.out_q.put(data)
+    
+    def recv(self):
+        return self.in_q.get()
+
+
+def pseudo_pipe():
+    q1 = Queue()
+    q2 = Queue()
+
+    return PPipeEnd(q1, q2), PPipeEnd(q2, q1)
+
+
 
 def loader(files, pipe, main_sem, internal_sem, batch_size):
     torch.set_num_threads(1)
@@ -88,15 +111,15 @@ class ReplayRoller():
         self.hidden = self.model.get_zero_state(1)
         #print(self.hidden)
         self.hidden = (self.hidden[0].cuda(),self.hidden[1].cuda())
-        self.pipe_my, pipe_other = mp.Pipe()
+        self.pipe_my, pipe_other = pseudo_pipe()
         self.files = files_queue
-        self.loader = mp.Process(target=loader,args=(self.files,pipe_other,self.sem,self.in_sem, self.batch_size))
+        self.loader = mp.Thread(target=loader,args=(self.files,pipe_other,self.sem,self.in_sem, self.batch_size))
         self.loader.start()
 
 
     def get(self):
         
-        if not self.in_sem.acquire(block=False):
+        if not self.in_sem.acquire(blocking=False):
             return []
 
         self.pipe_my.send("GET")
@@ -125,7 +148,6 @@ class BatchSeqLoader():
     def __init__(self, envs, names, steps, model):
         self.main_sem = mp.Semaphore(0)
         self.rollers = []
-
         def chunkIt(seq, num):
             avg = len(seq) / float(num)
             out = []

@@ -24,8 +24,6 @@ from math import sqrt
 from kmeans import cached_kmeans
 
 
-
-
 ONLINE = True
 trains_loaded = True
 try:
@@ -181,8 +179,7 @@ def main():
     if LOAD:
         model.load_state_dict(torch.load("train/model.tm"))
     model.cuda()
-    if not ONLINE:
-        aicrowd_helper.training_start()
+    aicrowd_helper.training_start()
     train(model, "train", 150000000, loader, logger)
     
     # model.selector = Selector()
@@ -233,8 +230,7 @@ def main():
     torch.save(model.state_dict(),"train/model.tm")
     print("ok", file=sys.stderr)
     aicrowd_helper.register_progress(1)
-    if not ONLINE:
-        aicrowd_helper.training_end()
+    aicrowd_helper.training_end()
 
     loader.kill()
     #env.close()
