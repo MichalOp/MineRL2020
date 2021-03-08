@@ -4,7 +4,7 @@ import select
 import time
 import logging
 import os
-import threading
+import sys
 
 import aicrowd_helper
 import gym
@@ -24,9 +24,10 @@ from math import sqrt
 from kmeans import cached_kmeans
 from collections import deque
 
+ONLINE = True
 trains_loaded = True
 try:
-    from trains import Task
+    from clearml import Task
 except:
     trains_loaded = False
 from random import shuffle, sample
@@ -45,7 +46,7 @@ MINERL_TRAINING_MAX_INSTANCES = int(os.getenv('MINERL_TRAINING_MAX_INSTANCES', 5
 MINERL_TRAINING_TIMEOUT = int(os.getenv('MINERL_TRAINING_TIMEOUT_MINUTES', 4*24*60))
 # The dataset is available in data/ directory from repository root.
 MINERL_DATA_ROOT = os.getenv('MINERL_DATA_ROOT', 'data/')
-print(MINERL_DATA_ROOT)
+print(MINERL_DATA_ROOT, file=sys.stderr)
 
 # Optional: You can view best effort status of your instances with the help of parser.py
 # This will give you current state like number of steps completed, instances launched and so on. Make your you keep a tap on the numbers to avoid breaching any limits.
@@ -58,8 +59,8 @@ parser = Parser('performance/',
                 submission_timeout=MINERL_TRAINING_TIMEOUT*60,
                 initial_poll_timeout=600)
 
-BATCH_SIZE = 8
-SEQ_LEN = 30
+BATCH_SIZE = 4
+SEQ_LEN = 100
 
 FIT = True
 LOAD = False
@@ -73,8 +74,9 @@ def update_loss_dict(old, new):
     return new
 
 
+
 def train(model, mode, steps, loader, logger):
-    
+    torch.set_num_threads(1)
     if mode != "fit_selector":
         optimizer = Adam(params=model.parameters(), lr=1e-4, weight_decay=1e-6)
     else:
@@ -122,20 +124,23 @@ def train(model, mode, steps, loader, logger):
         scheduler.step()
         
         if modcount >= steps/20:
-            #torch.save(model.state_dict(),"train/model.tm")
-            torch.save(model.state_dict(),f"testing/model_{count//int(steps/20)}.tm")
+            if ONLINE:
+                torch.save(model.state_dict(),"train/model.tm")
+            else:
+                torch.save(model.state_dict(),f"testing/model_{count//int(steps/20)}.tm")
             modcount -= int(steps/20)
-            #if count//int(steps/20) == 15:
-            #    break
+            if ONLINE:
+                if count//int(steps/20) == 14:
+                    break
 
-        if step % 20 == 0:
-            print(losssum, count, count/(time()-t0))
+        if step % 40 == 0:
+            print(losssum, count, count/(time()-t0), file=sys.stderr)
             aicrowd_helper.register_progress(count/steps)
-            if step > 50 and trains_loaded:
+            if step > 50 and trains_loaded and not ONLINE:
                 for k in loss_dict:
-                    logger.report_scalar(title='Training_'+mode, series='loss_'+k, value=loss_dict[k]/20, iteration=int(count)) 
-                logger.report_scalar(title='Training_'+mode, series='loss', value=losssum/20, iteration=int(count))
-                logger.report_scalar(title='Training_'+mode, series='grad_norm', value=gradsum/20, iteration=int(count))
+                    logger.report_scalar(title='Training_'+mode, series='loss_'+k, value=loss_dict[k]/40, iteration=int(count)) 
+                logger.report_scalar(title='Training_'+mode, series='loss', value=losssum/40, iteration=int(count))
+                logger.report_scalar(title='Training_'+mode, series='grad_norm', value=gradsum/40, iteration=int(count))
                 logger.report_scalar(title='Training_'+mode, series='learning_rate', value=float(optimizer.param_groups[0]["lr"]), iteration=int(count))
             losssum = 0
             gradsum = 0
@@ -265,23 +270,24 @@ def train_rl(model, mode, steps, loader, logger):
             torch.save(model.state_dict(),"train/model_rl.tm")
 
 def main():
-    if trains_loaded:
-        task = Task.init(project_name='MineRL', task_name='kmeans 120 dia+pic+tre 512 reinforcement learning seq=30 auxilliary tasks dense')
+    if trains_loaded and not ONLINE:
+        task = Task.init(project_name='MineRL', task_name='kmeans pic+pic+tre 1024 + flips whatever')
         logger = task.get_logger()
     else:
         logger = None
 
-    aicrowd_helper.training_start()
-    cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
+    # aicrowd_helper.training_start()
     
+    cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
+    print("lets gooo", file=sys.stderr)
     """
     This function will be called for training phase.
     """
     # How to sample minerl data is document here:
     # http://minerl.io/docs/tutorials/data_sampling.html
     #data = minerl.data.make('MineRLObtainDiamondVectorObf-v0', data_dir='data/',num_workers=6)
-    train_files = absolute_file_paths('data/MineRLObtainDiamondDenseVectorObf-v0')+\
-                  absolute_file_paths('data/MineRLObtainIronPickaxeDenseVectorObf-v0')+\
+    train_files = absolute_file_paths('data/MineRLObtainIronPickaxeVectorObf-v0')+\
+                  absolute_file_paths('data/MineRLObtainIronPickaxeVectorObf-v0')+\
                   absolute_file_paths('data/MineRLTreechopVectorObf-v0')
 
     model = Model()
@@ -291,17 +297,56 @@ def main():
     if LOAD:
         model.load_state_dict(torch.load("train/model_rl.tm"))
     model.cuda()
+    aicrowd_helper.training_start()
+    train(model, "train", 150000000, loader, logger)
     
-    #train(model, "train", 150000000, loader, logger)
-    #loader.kill()
-
-    train_rl(model, "train", 150000000, loader, logger)
     # model.selector = Selector()
     # model.selector.cuda()
     # aicrowd_helper.register_progress(0.5)
 
-    #torch.save(model.state_dict(),"train/model.tm")
-    print("ok")
+    # train(model, "fit_selector", 50000000, loader)
+
+        # Print the POV @ the first step of the sequence
+        #print(current_state['pov'][0])
+
+        # Print the final reward pf the sequence!
+        #print(reward[-1])
+
+        # Check if final (next_state) is terminal.
+       # print(done[-1])
+
+        # ... do something with the data.
+        #print("At the end of trajectories the length"
+              #"can be < max_sequence_len", len(reward))
+
+    # Sample code for illustration, add your training code below
+    #env = gym.make(MINERL_GYM_ENV)
+
+#     actions = [env.action_space.sample() for _ in range(10)] # Just doing 10 samples in this example
+#     xposes = []
+#     for _ in range(1):
+#         obs = env.reset()
+#         done = False
+#         netr = 0
+
+#         # Limiting our code to 1024 steps in this example, you can do "while not done" to run till end
+#         while not done:
+
+            # To get better view in your training phase, it is suggested
+            # to register progress continuously, example when 54% completed
+            # aicrowd_helper.register_progress(0.54)
+
+            # To fetch latest information from instance manager, you can run below when you want to know the state
+            #>> parser.update_information()
+            #>> print(parser.payload)
+            # .payload: provide AIcrowd generated json
+            # Example: {'state': 'RUNNING', 'score': {'score': 0.0, 'score_secondary': 0.0}, 'instances': {'1': {'totalNumberSteps': 2001, 'totalNumberEpisodes': 0, 'currentEnvironment': 'MineRLObtainDiamond-v0', 'state': 'IN_PROGRESS', 'episodes': [{'numTicks': 2001, 'environment': 'MineRLObtainDiamond-v0', 'rewards': 0.0, 'state': 'IN_PROGRESS'}], 'score': {'score': 0.0, 'score_secondary': 0.0}}}}
+            # .current_state: provide indepth state information avaiable as dictionary (key: instance id)
+
+    # Save trained model to train/ directory
+    # Training 100% Completed
+    torch.save(model.state_dict(),"train/model.tm")
+    print("ok", file=sys.stderr)
     aicrowd_helper.register_progress(1)
     aicrowd_helper.training_end()
 

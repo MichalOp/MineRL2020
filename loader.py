@@ -1,16 +1,41 @@
 from minerl.data import DataPipeline
-import torch.multiprocessing as mp
+import threading as mp
 from itertools import cycle
 from minerl.data.util import minibatch_gen
 import minerl
 import torch
-from random import shuffle
+from random import shuffle, random
 import os
+import sys
 from kmeans import cached_kmeans
 from tqdm import tqdm
 from torch.nn.utils.rnn import pad_sequence
 
-def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
+from queue import Queue
+
+class PPipeEnd:
+
+    def __init__(self, in_q, out_q):
+        self.in_q = in_q
+        self.out_q= out_q
+
+    def send(self,data):
+        self.out_q.put(data)
+    
+    def recv(self):
+        return self.in_q.get()
+
+
+def pseudo_pipe():
+    q1 = Queue()
+    q2 = Queue()
+
+    return PPipeEnd(q1, q2), PPipeEnd(q2, q1)
+
+
+
+def loader(files, pipe, main_sem, internal_sem, batch_size):
+    torch.set_num_threads(1)
     kmeans = cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
 
     files = cycle(files)
@@ -27,9 +52,24 @@ def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
         obs, act, reward, nextobs, done = d
         #print(len(obs["pov"]))
         #print("start")
-        obs_screen = torch.tensor(obs["pov"], dtype=torch.float32).transpose(1,3)
+        obs_screen = torch.tensor(obs["pov"], dtype=torch.float32).transpose(1,3).transpose(2,3)
+        obs_vector = torch.tensor(obs["vector"], dtype=torch.float32)
+        flip_data = torch.ones((obs_vector.shape[0], 2), dtype=torch.float32)
+
+        if random() > 0.5:
+            obs_screen = torch.flip(obs_screen, [2])
+            flip_data[:,0] = -1
+        
+        if random() > 0.5:
+            obs_screen = obs_screen.transpose(2,3)
+            flip_data[:,1] = -1
+
+        if random() > 0.5:
+            obs_screen = torch.flip(obs_screen, [1])
+
+        obs_vector = torch.cat([obs_vector, flip_data], dim=1)
         #print("pov")
-        obs_vector = torch.tensor(obs["vector"], dtype=torch.float32)#.transpose(0,1)
+        #.transpose(0,1)
 
         running = 1 - torch.tensor(done, dtype=torch.float32)
         rewards = torch.tensor(reward, dtype=torch.float32)
@@ -43,15 +83,20 @@ def loader(files, pipe, main_sem, internal_sem, consumed_sem, batch_size):
             
             if l - i < batch_size:
                 break
-
-            pipe.send((obs_screen[i:i+batch_size], obs_vector[i:i+batch_size], actions[i:i+batch_size], rewards[i:i+batch_size]))
             
-            if pipe.poll():
-                return
-
             internal_sem.release()
             main_sem.release()
-            consumed_sem.acquire()
+
+            msg = pipe.recv()
+            if msg == "GET":
+                pass
+            elif msg == "STOP":
+                print("Shutting down", file=sys.stderr)
+                return
+
+            pipe.send((obs_screen[i:i+batch_size], obs_vector[i:i+batch_size], prev_action[i:i+batch_size], actions[i:i+batch_size], running[i:i+batch_size], rewards[i:i+batch_size]))
+            
+            
 
 
 
@@ -62,22 +107,22 @@ class ReplayRoller():
         self.sem = sem
         self.model = model
         self.in_sem = mp.Semaphore(0)
-        self.sem_consumed = mp.Semaphore(prefetch)
         self.data = []
         self.hidden = self.model.get_zero_state(1)
         #print(self.hidden)
         self.hidden = (self.hidden[0].cuda(),self.hidden[1].cuda())
-        self.pipe_my, pipe_other = mp.Pipe()
+        self.pipe_my, pipe_other = pseudo_pipe()
         self.files = files_queue
-        self.loader = mp.Process(target=loader,args=(self.files,pipe_other,self.sem,self.in_sem, self.sem_consumed, self.batch_size))
+        self.loader = mp.Thread(target=loader,args=(self.files,pipe_other,self.sem,self.in_sem, self.batch_size))
         self.loader.start()
 
 
     def get(self):
         
-        if not self.in_sem.acquire(block=False):
+        if not self.in_sem.acquire(blocking=False):
             return []
 
+        self.pipe_my.send("GET")
         data = self.pipe_my.recv()
 
         while data == "RESET":
@@ -88,11 +133,10 @@ class ReplayRoller():
         return data + (self.hidden,)
 
     def kill(self):
-        self.pipe_my.send("die")
-        self.sem_consumed.release()
+        self.pipe_my.send("STOP")
+        self.loader.join()
 
     def set_hidden(self, new_hidden):
-        self.sem_consumed.release()
         self.hidden = new_hidden
 
 
@@ -104,7 +148,6 @@ class BatchSeqLoader():
     def __init__(self, envs, names, steps, model):
         self.main_sem = mp.Semaphore(0)
         self.rollers = []
-
         def chunkIt(seq, num):
             avg = len(seq) / float(num)
             out = []

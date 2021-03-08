@@ -114,9 +114,9 @@ class InputProcessor(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.conv_layers = FixupResNetCNN(3)
-        self.spatial_reshape = nn.Sequential(nn.Linear(64*8*8, 512),nn.ReLU(),nn.LayerNorm(512))
-        self.nonspatial_reshape = nn.Sequential(nn.Linear(64,64),nn.ReLU(),nn.LayerNorm(64))
+        self.conv_layers = FixupResNetCNN(3,double_channels=True)
+        self.spatial_reshape = nn.Sequential(nn.Linear(128*8*8, 896),nn.ReLU(),nn.LayerNorm(896))
+        self.nonspatial_reshape = nn.Sequential(nn.Linear(66,128),nn.ReLU(),nn.LayerNorm(128))
 
     def forward(self, spatial, nonspatial):
         shape = spatial.shape
@@ -139,7 +139,7 @@ class Core(nn.Module):
     def __init__(self):
         super().__init__()
         self.input_proc = InputProcessor()
-        self.lstm = nn.LSTM(512+64, 512, 1)
+        self.lstm = nn.LSTM(1024, 1024, 1)
         #self.hidden = nn.Sequential(nn.Linear(256+64, 256),nn.ReLU())
         
 
@@ -150,7 +150,7 @@ class Core(nn.Module):
         #lstm_output = self.hidden(processed)
 
 
-        return lstm_output, new_state, features
+        return lstm_output+processed, new_state
 
 class SubPolicies(nn.Module):
 
@@ -164,20 +164,6 @@ class SubPolicies(nn.Module):
         processed = self.input_proc.forward(spatial, nonspatial)
         return self.reflexes(processed).view(shape[:2]+(10,64))
 
-class Values(nn.Module):
-
-    def __init__(self):
-        super().__init__()
-        self.qs = nn.Sequential(nn.Linear(512, 512), nn.ReLU(), nn.Linear(512, default_n))
-        self.value = nn.Sequential(nn.Linear(512, 512), nn.ReLU(), nn.Linear(512, 1))
-
-    def forward(self, x):
-        
-        qs = self.qs(x)
-        advantages = qs - qs.mean(axis=-1, keepdims=True)
-        v = self.value(x)
-
-        return v+advantages
 
 class Model(nn.Module):
 
@@ -185,22 +171,14 @@ class Model(nn.Module):
         super().__init__()
         self.kmeans = cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
         self.core = Core()
-        self.selector = nn.Sequential(nn.Linear(512, 512), nn.ReLU(), nn.Linear(512, default_n))
-        self.auxiliary = nn.Sequential(nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1), nn.ReLU(),
-                                       nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1), nn.ReLU())
-        self.auxiliary_screen = nn.ConvTranspose2d(128, default_n, kernel_size=4, stride=2, padding=1)
-        self.auxiliary_screen_v = nn.ConvTranspose2d(128, 1, kernel_size=4, stride=2, padding=1)
-        self.auxiliary_features = nn.ConvTranspose2d(128, default_n, kernel_size=4, stride=2, padding=1)
-        self.auxiliary_features_v = nn.ConvTranspose2d(128, 1, kernel_size=4, stride=2, padding=1)
-
-        self.values = Values()
+        self.selector = nn.Sequential(nn.Linear(1024, 1024), nn.ReLU(), nn.Linear(1024, 120))
         #self.embedding = nn.Embedding(120, 32)
         #self.repeat = nn.Sequential(nn.Linear(256+32, 256), nn.ReLU(), nn.Linear(256, 40))
         
         #self.reflexes = SubPolicies()
 
     def get_zero_state(self, batch_size, device="cuda"):
-        return (torch.zeros((1, batch_size, 512), device=device), torch.zeros((1, batch_size, 512), device=device))
+        return (torch.zeros((1, batch_size, 1024), device=device), torch.zeros((1, batch_size, 1024), device=device))
 
     def compute_front(self, spatial, nonspatial, state):
         hidden, new_state, features = self.core(spatial, nonspatial, state)
