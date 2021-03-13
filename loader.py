@@ -14,7 +14,8 @@ from torch.nn.utils.rnn import pad_sequence
 from queue import Queue
 
 class PPipeEnd:
-
+    ''' An multiprocessing.Pipe emulator for threading, developed as a quick fix
+    when it turned out multiprocessing doesn't work on evaluation servers.'''
     def __init__(self, in_q, out_q):
         self.in_q = in_q
         self.out_q= out_q
@@ -33,7 +34,6 @@ def pseudo_pipe():
     return PPipeEnd(q1, q2), PPipeEnd(q2, q1)
 
 
-
 def loader(files, pipe, main_sem, internal_sem, batch_size):
     torch.set_num_threads(1)
     kmeans = cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
@@ -50,8 +50,6 @@ def loader(files, pipe, main_sem, internal_sem, batch_size):
         pipe.send("RESET")
         steps = 0
         obs, act, reward, nextobs, done = d
-        #print(len(obs["pov"]))
-        #print("start")
         obs_screen = torch.tensor(obs["pov"], dtype=torch.float32).transpose(1,3).transpose(2,3)
         obs_vector = torch.tensor(obs["vector"], dtype=torch.float32)
         flip_data = torch.ones((obs_vector.shape[0], 2), dtype=torch.float32)
@@ -68,14 +66,11 @@ def loader(files, pipe, main_sem, internal_sem, batch_size):
             obs_screen = torch.flip(obs_screen, [1])
 
         obs_vector = torch.cat([obs_vector, flip_data], dim=1)
-        #print("pov")
-        #.transpose(0,1)
 
         running = 1 - torch.tensor(done, dtype=torch.float32)
         rewards = torch.tensor(reward, dtype=torch.float32)
-        #print("vec")
         encoded = kmeans.predict(act["vector"])
-        actions = torch.tensor(encoded, dtype=torch.int64)#.transpose(0,1)
+        actions = torch.tensor(encoded, dtype=torch.int64)
         prev_action = torch.cat([torch.zeros((1,),dtype=torch.int64), actions[:-1]], dim=0)
         l = actions.shape[0]
         for i in range(0, l, batch_size):
@@ -95,9 +90,6 @@ def loader(files, pipe, main_sem, internal_sem, batch_size):
                 return
 
             pipe.send((obs_screen[i:i+batch_size], obs_vector[i:i+batch_size], prev_action[i:i+batch_size], actions[i:i+batch_size], running[i:i+batch_size], rewards[i:i+batch_size]))
-            
-            
-
 
 
 class ReplayRoller():
@@ -142,7 +134,9 @@ class ReplayRoller():
 
 class BatchSeqLoader():
     '''
-    Brilliant solution that maximizes sample diversity and guarantees that your network won't be able to use its memory
+    This loader attempts to diversify loaded samples by keeping a pool of open
+    replays and randomly selecting several to load a sequence from at each training
+    step.
     '''
 
     def __init__(self, envs, names, steps, model):
@@ -176,7 +170,7 @@ class BatchSeqLoader():
 
         return output
 
-    def get_batch(self, batch_size, additional_data):
+    def get_batch(self, batch_size):
 
         shuffle(self.rollers)
         data, self.current_rollers = [],[]
@@ -190,8 +184,8 @@ class BatchSeqLoader():
                     self.current_rollers.append(roller)
                     if len(data) == batch_size:
                         break
-        
-        data = list(zip(*(data+additional_data)))
+
+        data = list(zip(*data))
         output = []
         for d in data[:-1]:
             padded = pad_sequence(d).cuda()
@@ -211,7 +205,6 @@ class BatchSeqLoader():
             roller.kill()
 
 class dummy_model:
-
     def get_zero_state(self, x):
         return (torch.zeros((1,1,1)),torch.zeros((1,1,1)))
 
