@@ -93,50 +93,12 @@ def _do_kmeans(env_id, n_clusters, random_state, subtask_reward_max,
         act_vectors.append(act['vector'])
     acts = np.concatenate(act_vectors).reshape(-1, 64)
 
-    # if subtask_reward_max is None and maxlen_each is None:
-    #     act_vectors = []
-    #     for ob, act, _, next_ob, _ in tqdm.tqdm(dat.batch_iter(batch_size=16, seq_len=32, num_epochs=1, preload_buffer_size=32, seed=random_state)):
-                
-
-    #         if only_vector_converter:
-    #             if np.allclose(ob['vector'], next_ob['vector']):
-    #                 # Ignore the case when the action does not change observation$vector.
-    #                 continue
-    #         act_vectors.append(act['vector'])
-    #     acts = np.concatenate(act_vectors).reshape(-1, 64)
-    # else:
-    #     episode_names = dat.get_trajectory_names()
-    #     mem_normal = BoundedLengthMemory(maxlen=maxlen_each, random_state=random_state)
-    #     mem_vc = BoundedLengthMemory(maxlen=maxlen_each, random_state=random_state)
-    #     for episode_name in episode_names:
-    #         traj = dat.load_data(episode_name)
-    #         dn = False
-    #         current_reward_sum = 0
-    #         while not dn:
-    #             ob, act, rw, next_ob, dn = next(traj)
-    #             current_reward_sum += rw
-    #             if subtask_reward_max is not None and current_reward_sum >= subtask_reward_max:
-    #                 dn = True
-    #             if np.allclose(ob['vector'], next_ob['vector']):
-    #                 # Ignore the case when the action does not change observation$vector.
-    #                 mem_normal.append(act['vector'])
-    #             else:
-    #                 mem_vc.append(act['vector'])
-    #     if only_vector_converter:
-    #         acts = mem_vc().reshape(-1, 64)
-    #     else:
-    #         acts = np.concatenate((mem_normal(), mem_vc()), axis=0).reshape(-1, 64)
     logger.debug(f'loading data... done.')
     logger.debug(f'executing keamns...')
     kmeans = KMeans(n_clusters=n_clusters, random_state=random_state).fit(acts)
     logger.debug(f'executing keamns... done.')
     return kmeans
 
-
-# def _describe_kmeans_result(kmeans):
-#     result = [(obf_a, minerl.herobraine.envs.MINERL_TREECHOP_OBF_V0.unwrap_action({'vector': obf_a})) for obf_a in kmeans.cluster_centers_]
-#     logger.debug(result)
-#     return result
 
 
 def _save_kmeans_result_cache(kmeans, filepath):

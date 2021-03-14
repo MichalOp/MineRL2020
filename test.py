@@ -10,7 +10,6 @@ import threading
 
 from typing import Callable
 
-import aicrowd_helper
 import gym
 import minerl
 import abc
@@ -19,7 +18,7 @@ import numpy as np
 import coloredlogs
 coloredlogs.install(logging.DEBUG)
 
-from model import Model, BaseModel, ProbModel
+from model import Model
 import torch
 import cv2
 

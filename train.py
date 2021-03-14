@@ -148,6 +148,7 @@ def main():
     else:
         logger = None
 
+    os.makedirs("train", exist_ok=True)
     cached_kmeans("train","MineRLObtainDiamondVectorObf-v0")
     print("lets gooo", file=sys.stderr)
 
@@ -165,12 +166,10 @@ def main():
     model.cuda()
     train(model, "train", 150000000, loader, logger)
     
-    # Training 100% Completed
     torch.save(model.state_dict(),"train/model.tm")
     print("ok", file=sys.stderr)
 
     loader.kill()
-    #env.close()
 
 
 if __name__ == "__main__":
