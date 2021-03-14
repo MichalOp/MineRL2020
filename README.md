@@ -1,5 +1,5 @@
-# Using supervised learning to train an RNN that sometimes tries to do something of value in Minecraft 
-This repository contains my somewhat cleaned up solution for MineRL 2020 that has reached the 3rd place (1st in pure imitation category).
+# Using supervised learning to train an RNN that tries to do something of value in Minecraft 
+This repository contains my somewhat cleaned up solution for MineRL 2020 that has reached the 3rd place (1st in pure imitation learning category).
 The quality of the code is not particularly great, but as it is quite short, it might still be helpful as a starting point in the future editions.
 
 ## The code
